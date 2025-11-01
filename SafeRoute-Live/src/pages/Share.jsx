@@ -35,7 +35,12 @@ export default function Share() {
       const data = await getActiveSessions();
       setActiveSessions(data.sessions || []);
     } catch (error) {
-      console.error('Error loading sessions:', error);
+      // Silently handle authentication errors - share features require token
+      if (error.code === 'NO_TOKEN' || error.message?.includes('Authentication')) {
+        console.log('Share features disabled - token required');
+      } else {
+        console.error('Error loading sessions:', error);
+      }
     }
   };
 

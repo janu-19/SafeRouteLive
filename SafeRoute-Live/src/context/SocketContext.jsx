@@ -21,20 +21,11 @@ export const SocketProvider = ({ children }) => {
     // Get JWT token from localStorage
     const token = localStorage.getItem('token');
 
-    if (!token) {
-      console.warn('⚠️ No token found in localStorage. Socket connection requires authentication.');
-      console.warn('💡 Set token with: localStorage.setItem("token", "<your-token>")');
-      return;
-    }
-
-    console.log('🔌 Initializing authenticated socket connection...');
-    console.log('🔑 Token found:', token.substring(0, 50) + '...');
+    // Initialize socket - connect without auth for basic features
+    // If token exists, use it; otherwise connect without authentication
+    console.log('🔌 Initializing socket connection...');
     
-    // Initialize socket with authentication
-    const newSocket = io(WS_URL, {
-      auth: {
-        token: token
-      },
+    const socketOptions = {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 1000,
@@ -42,7 +33,19 @@ export const SocketProvider = ({ children }) => {
       reconnectionAttempts: 5,
       timeout: 20000,
       autoConnect: true
-    });
+    };
+
+    // Add authentication only if token exists
+    if (token) {
+      console.log('🔑 Token found:', token.substring(0, 50) + '...');
+      socketOptions.auth = { token };
+    } else {
+      console.warn('⚠️ No token found in localStorage. Connecting without authentication (basic features only).');
+      console.warn('💡 Set token with: localStorage.setItem("token", "<your-token>") for share features');
+    }
+    
+    // Initialize socket
+    const newSocket = io(WS_URL, socketOptions);
 
     // Connection event handlers
     newSocket.on('connect', () => {

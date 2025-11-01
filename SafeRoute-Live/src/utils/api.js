@@ -117,4 +117,23 @@ export async function getAddressSuggestions(query) {
   }
 }
 
+/**
+ * Get comprehensive data from n8n automation
+ * Returns social feed (tweets, news), weather, traffic, and crowd density data
+ * @param {number} lat - Latitude (optional, defaults to user location)
+ * @param {number} lng - Longitude (optional, defaults to user location)
+ * @returns {Promise<Object>} Dashboard data from n8n workflow
+ */
+export async function getN8NData(lat = null, lng = null) {
+  const params = new URLSearchParams();
+  if (lat !== null) params.append('lat', lat);
+  if (lng !== null) params.append('lng', lng);
+  
+  const res = await fetch(`${API_BASE_URL}/api/getN8NData?${params}`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch n8n data');
+  }
+  return res.json();
+}
+
 

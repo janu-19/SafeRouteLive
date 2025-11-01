@@ -19,8 +19,10 @@ const apiRequest = async (endpoint, options = {}) => {
   const token = getToken();
   
   if (!token) {
-    console.error('❌ No token found in localStorage');
-    throw new Error('Authentication required. Please login. Set token with: localStorage.setItem("token", "<your-token>")');
+    // Silently fail for share features if no token - don't break the app
+    const error = new Error('Authentication required. Please login. Set token with: localStorage.setItem("token", "<your-token>")');
+    error.code = 'NO_TOKEN';
+    throw error;
   }
 
   console.log('🔑 Making request with token:', token.substring(0, 50) + '...');

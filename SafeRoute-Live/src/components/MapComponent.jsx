@@ -4,7 +4,7 @@ import { io } from 'socket.io-client';
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN || '';
 
-export default function MapComponent({ routes = [], selectedRoute = null, accidents = [], source = '', destination = '', onCurrentLocationAsSource = null }) {
+export default function MapComponent({ routes = [], selectedRoute = null, accidents = [], source = '', destination = '', onCurrentLocationAsSource = null, n8nAlerts = [], selectedAlertId = null, onAlertFocus = null }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const routeLayersRef = useRef(new Map());
@@ -13,6 +13,10 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
   const heatLayerIdRef = useRef('heat-layer');
   const accidentsLayerRef = useRef('accidents-layer');
   const accidentsSourceRef = useRef('accidents-source');
+  const n8nAlertsLayerRef = useRef('n8n-alerts-layer');
+  const n8nAlertsSourceRef = useRef('n8n-alerts-source');
+  const n8nAlertMarkersRef = useRef(new Map()); // Store marker references
+  const n8nAlertCoordinatesRef = useRef(new Map()); // Store coordinates for each alert
   const startMarkerRef = useRef(null);
   const endMarkerRef = useRef(null);
   const currentLocationMarkerRef = useRef(null);
@@ -191,6 +195,17 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
             'circle-color': '#ef4444',
             'circle-stroke-width': 2,
             'circle-stroke-color': '#ffffff'
+          }
+        });
+      }
+
+      // n8n Alerts layer (for GeoJSON-based alerts if needed)
+      if (!map.getSource(n8nAlertsSourceRef.current)) {
+        map.addSource(n8nAlertsSourceRef.current, {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: []
           }
         });
       }
@@ -377,6 +392,181 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
       source.setData(accidentsGeoJSON);
     }
   }, [accidents]);
+
+  // Update n8n alert markers on map
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !map.isStyleLoaded?.()) return;
+
+    // Remove old markers
+    n8nAlertMarkersRef.current.forEach((marker) => {
+      marker.remove();
+    });
+    n8nAlertMarkersRef.current.clear();
+
+    // Geocode and add new markers
+    const geocodeAndAddMarker = async (alert) => {
+      if (!alert.location) return; // Skip if no location
+
+      try {
+        // Try to geocode location string to coordinates
+        const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
+        if (!MAPBOX_TOKEN) return;
+
+        const params = new URLSearchParams({
+          access_token: MAPBOX_TOKEN,
+          limit: '1',
+          proximity: '77.5946,12.9716' // Center around default location
+        });
+
+        const res = await fetch(
+          `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(alert.location)}.json?${params}`
+        );
+
+        if (!res.ok) return;
+        const data = await res.json();
+
+        if (data.features && data.features.length > 0) {
+          const coords = data.features[0].center; // [lng, lat]
+          
+          // Get icon based on alert type
+          const getIconForType = (type) => {
+            switch (type) {
+              case 'accident':
+              case 'emergency':
+                return '🚨';
+              case 'crime':
+                return '🔴';
+              case 'weather':
+                return '⛈️';
+              case 'protest':
+                return '⚠️';
+              case 'roadwork':
+                return '🚧';
+              case 'crowd':
+                return '👥';
+              default:
+                return '📍';
+            }
+          };
+
+          // Get color based on alert type
+          const getColorForType = (type) => {
+            switch (type) {
+              case 'accident':
+              case 'emergency':
+                return '#ef4444';
+              case 'crime':
+                return '#dc2626';
+              case 'weather':
+                return '#3b82f6';
+              case 'protest':
+                return '#f59e0b';
+              case 'roadwork':
+                return '#f97316';
+              case 'crowd':
+                return '#8b5cf6';
+              default:
+                return '#6366f1';
+            }
+          };
+
+          const icon = getIconForType(alert.type);
+          const color = getColorForType(alert.type);
+
+          // Create marker element
+          const el = document.createElement('div');
+          el.className = 'n8n-alert-marker';
+          el.style.width = '36px';
+          el.style.height = '36px';
+          el.style.borderRadius = '50%';
+          el.style.backgroundColor = color;
+          el.style.border = '3px solid white';
+          el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.5)';
+          el.style.display = 'flex';
+          el.style.alignItems = 'center';
+          el.style.justifyContent = 'center';
+          el.style.fontSize = '20px';
+          el.style.cursor = 'pointer';
+          el.innerHTML = icon;
+
+          // Create popup content
+          const popupContent = `
+            <div style="padding: 8px; max-width: 200px;">
+              <div style="font-weight: bold; margin-bottom: 4px; font-size: 14px;">
+                ${icon} ${alert.type ? alert.type.charAt(0).toUpperCase() + alert.type.slice(1) : 'Alert'}
+              </div>
+              <div style="font-size: 12px; color: #666; margin-bottom: 4px;">
+                ${alert.location}
+              </div>
+              <div style="font-size: 12px; color: #333;">
+                ${alert.text || alert.summary || ''}
+              </div>
+              ${alert.source ? `<div style="font-size: 11px; color: #999; margin-top: 4px;">Source: ${alert.source}</div>` : ''}
+            </div>
+          `;
+
+          const marker = new mapboxgl.Marker(el)
+            .setLngLat(coords)
+            .setPopup(new mapboxgl.Popup({ offset: 25, maxWidth: '250px' })
+              .setHTML(popupContent))
+            .addTo(map);
+
+          const alertId = alert.id || `alert-${Date.now()}`;
+          n8nAlertMarkersRef.current.set(alertId, marker);
+          n8nAlertCoordinatesRef.current.set(alertId, coords); // Store coordinates for navigation
+        }
+      } catch (error) {
+        console.error(`Error geocoding alert location "${alert.location}":`, error);
+      }
+    };
+
+    // Process all alerts
+    n8nAlerts.forEach((alert) => {
+      geocodeAndAddMarker(alert);
+    });
+
+    // Cleanup
+    return () => {
+      n8nAlertMarkersRef.current.forEach((marker) => {
+        marker.remove();
+      });
+      n8nAlertMarkersRef.current.clear();
+      n8nAlertCoordinatesRef.current.clear();
+    };
+  }, [n8nAlerts]);
+
+  // Handle selected alert - fly to location and open popup
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !selectedAlertId) return;
+
+    const marker = n8nAlertMarkersRef.current.get(selectedAlertId);
+    const coords = n8nAlertCoordinatesRef.current.get(selectedAlertId);
+
+    if (marker && coords) {
+      // Fly to the location
+      map.flyTo({
+        center: coords,
+        zoom: 15,
+        duration: 1500,
+        essential: true
+      });
+
+      // Open the popup after fly animation
+      setTimeout(() => {
+        marker.togglePopup();
+      }, 1600);
+    } else if (coords) {
+      // If marker not ready yet but we have coordinates, just fly to location
+      map.flyTo({
+        center: coords,
+        zoom: 15,
+        duration: 1500,
+        essential: true
+      });
+    }
+  }, [selectedAlertId]);
 
   // Geocode addresses to coordinates
   useEffect(() => {

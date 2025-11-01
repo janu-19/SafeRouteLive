@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Chart } from 'chart.js/auto';
 import MapComponent from '../components/MapComponent.jsx';
 import { initializeSocket, getSocket } from '../utils/socket.js';
-import { getAccidents, getCrimeData } from '../utils/api.js';
+import { getAccidents, getCrimeData, getN8NData } from '../utils/api.js';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 
@@ -14,10 +14,12 @@ export default function Dashboard() {
 
   // Real-time data fusion state
   const [socialFeed, setSocialFeed] = useState([]);
-  const [crowdDensity, setCrowdDensity] = useState({ level: 'Medium', value: 45 });
-  const [trafficStatus, setTrafficStatus] = useState({ level: 'Moderate', value: 60 });
+  const [crowdDensity, setCrowdDensity] = useState(null); // null = no data, will use n8n
+  const [trafficStatus, setTrafficStatus] = useState(null); // null = no data, will use n8n
   const [showStaticData, setShowStaticData] = useState(false);
   const [staticDataPoints, setStaticDataPoints] = useState([]);
+  const [n8nDataLoading, setN8NDataLoading] = useState(false);
+  const [selectedAlertId, setSelectedAlertId] = useState(null); // Track which alert to show on map
 
   // Live alerts state
   const [liveAlerts, setLiveAlerts] = useState([]);
@@ -142,6 +144,65 @@ export default function Dashboard() {
     };
   }, []);
 
+  // Fetch all n8n data in one place (social feed, traffic, crowd)
+  useEffect(() => {
+    const fetchAllN8NData = async () => {
+      setN8NDataLoading(true);
+      try {
+        const userLat = lat ? parseFloat(lat) : 12.9716;
+        const userLng = lng ? parseFloat(lng) : 77.5946;
+        
+        const n8nResponse = await getN8NData(userLat, userLng);
+        
+        if (n8nResponse.success && n8nResponse.data) {
+          const data = n8nResponse.data;
+          
+          // Update social feed
+          if (data.socialFeed && data.socialFeed.length > 0) {
+            const feedItems = data.socialFeed.map(item => ({
+              id: item.id || `feed-${Date.now()}-${Math.random()}`,
+              source: item.source || 'n8n',
+              text: item.text || item.message || '',
+              timestamp: item.timestamp || Date.now(),
+              type: item.type || 'info',
+              url: item.url || null,
+              location: item.location || null,
+              status: item.status || null
+            }));
+            setSocialFeed(feedItems.slice(0, 50));
+            console.log(`✅ Loaded ${feedItems.length} social feed items from n8n`);
+          }
+          
+          // Update traffic status
+          if (data.traffic) {
+            setTrafficStatus(data.traffic);
+            console.log(`✅ Loaded traffic data from n8n: ${data.traffic.level} (${data.traffic.value}%)`);
+          }
+          
+          // Update crowd density
+          if (data.crowdDensity) {
+            setCrowdDensity(data.crowdDensity);
+            console.log(`✅ Loaded crowd density from n8n: ${data.crowdDensity.level} (${data.crowdDensity.value}%)`);
+          }
+        } else {
+          console.log('⚠️ n8n returned no data or unsuccessful response');
+        }
+      } catch (error) {
+        console.error('⚠️ Error fetching n8n data:', error.message);
+      } finally {
+        setN8NDataLoading(false);
+      }
+    };
+
+    // Fetch initial data
+    fetchAllN8NData();
+    
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchAllN8NData, 30000);
+    
+    return () => clearInterval(interval);
+  }, [lat, lng]);
+
   // Initialize traffic gauge chart
   useEffect(() => {
     const ctx = trafficChartRef.current?.getContext('2d');
@@ -152,7 +213,7 @@ export default function Dashboard() {
       data: {
         labels: ['Free', 'Moderate', 'Heavy'],
         datasets: [{
-          data: [30, 50, 20],
+          data: [0, 0, 0], // Start empty, will be updated with n8n data
           backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
           borderWidth: 0
         }]
@@ -168,29 +229,29 @@ export default function Dashboard() {
       }
     });
 
-    // Update chart periodically
-    const updateTraffic = () => {
-      const levels = ['Free', 'Moderate', 'Heavy'];
-      const values = [20 + Math.random() * 30, 40 + Math.random() * 30, 10 + Math.random() * 20];
-      const total = values.reduce((a, b) => a + b, 0);
-      const normalized = values.map(v => (v / total) * 100);
-      
-      chart.data.datasets[0].data = normalized;
-      chart.update();
-      
-      const level = levels[normalized.indexOf(Math.max(...normalized))];
-      const avgValue = (normalized[0] * 1 + normalized[1] * 0.5 + normalized[2] * 0.1) * 100;
-      setTrafficStatus({ level, value: Math.round(avgValue) });
+    // Update chart when traffic status changes (from n8n)
+    const updateTrafficChart = () => {
+      if (trafficStatus) {
+        const levelMap = { 'Free': 0, 'Moderate': 1, 'Heavy': 2 };
+        const levelIndex = levelMap[trafficStatus.level] || 1;
+        const normalized = [0, 0, 0];
+        normalized[levelIndex] = 100;
+        
+        chart.data.datasets[0].data = normalized;
+        chart.update();
+      } else {
+        // Show empty/loading state
+        chart.data.datasets[0].data = [0, 0, 0];
+        chart.update();
+      }
     };
 
-    const interval = setInterval(updateTraffic, 15000);
-    updateTraffic();
+    updateTrafficChart();
 
     return () => {
-      clearInterval(interval);
       chart.destroy();
     };
-  }, []);
+  }, [trafficStatus]);
 
   // Initialize crowd density chart
   useEffect(() => {
@@ -202,7 +263,7 @@ export default function Dashboard() {
       data: {
         labels: ['Low', 'Medium', 'High'],
         datasets: [{
-          data: [25, 50, 25],
+          data: [0, 0, 0], // Start empty, will be updated with n8n data
           backgroundColor: ['#10b981', '#f59e0b', '#ef4444'],
           borderWidth: 0
         }]
@@ -218,69 +279,31 @@ export default function Dashboard() {
       }
     });
 
-    // Update chart periodically
-    const updateCrowd = () => {
-      const levels = ['Low', 'Medium', 'High'];
-      const values = [25 + Math.random() * 25, 30 + Math.random() * 30, 20 + Math.random() * 25];
-      const total = values.reduce((a, b) => a + b, 0);
-      const normalized = values.map(v => (v / total) * 100);
-      
-      chart.data.datasets[0].data = normalized;
-      chart.update();
-      
-      const level = levels[normalized.indexOf(Math.max(...normalized))];
-      const avgValue = (normalized[0] * 0.2 + normalized[1] * 0.5 + normalized[2] * 0.9) * 100;
-      setCrowdDensity({ level, value: Math.round(avgValue) });
+    // Update chart when crowd density changes (from n8n)
+    const updateCrowdChart = () => {
+      if (crowdDensity) {
+        const levelMap = { 'Low': 0, 'Medium': 1, 'High': 2 };
+        const levelIndex = levelMap[crowdDensity.level] || 1;
+        const normalized = [0, 0, 0];
+        normalized[levelIndex] = 100;
+        
+        chart.data.datasets[0].data = normalized;
+        chart.update();
+      } else {
+        // Show empty/loading state
+        chart.data.datasets[0].data = [0, 0, 0];
+        chart.update();
+      }
     };
 
-    const interval = setInterval(updateCrowd, 20000);
-    updateCrowd();
+    updateCrowdChart();
 
     return () => {
-      clearInterval(interval);
       chart.destroy();
     };
-  }, []);
+  }, [crowdDensity]);
 
-  // Generate mock social media feed
-  useEffect(() => {
-    const generateSocialFeed = () => {
-      const messages = [
-        { text: '🚨 Accident reported at MG Road. Traffic diverted.', source: 'Twitter', type: 'accident' },
-        { text: '👥 Heavy crowd at Indiranagar Metro Station', source: 'User Report', type: 'crowd' },
-        { text: '🚧 Roadwork in progress near Koramangala', source: 'City Updates', type: 'roadwork' },
-        { text: '⚠️ Protest activity near Town Hall. Avoid area.', source: 'News Alert', type: 'protest' },
-        { text: '✅ All clear on Outer Ring Road. Safe to travel.', source: 'Traffic Control', type: 'safe' },
-        { text: '🌙 Well-lit streets reported in Whitefield area', source: 'Community', type: 'positive' },
-        { text: '🚨 Emergency services called to Malleswaram', source: 'Alert System', type: 'emergency' }
-      ];
-
-      const randomMessage = messages[Math.floor(Math.random() * messages.length)];
-      const feedItem = {
-        id: `feed-${Date.now()}-${Math.random()}`,
-        source: randomMessage.source,
-        text: randomMessage.text,
-        timestamp: Date.now(),
-        type: randomMessage.type
-      };
-
-      setSocialFeed(prev => [feedItem, ...prev].slice(0, 50));
-    };
-
-    // Generate initial feed
-    for (let i = 0; i < 10; i++) {
-      setTimeout(() => generateSocialFeed(), i * 2000);
-    }
-
-    // Continue generating feed every 15-30 seconds
-    const interval = setInterval(() => {
-      if (Math.random() > 0.3) {
-        generateSocialFeed();
-      }
-    }, 20000);
-
-    return () => clearInterval(interval);
-  }, []);
+  // Social feed is now fetched in the centralized n8n data fetcher above
 
   // Load static data points (police stations, streetlights)
   useEffect(() => {
@@ -327,9 +350,13 @@ export default function Dashboard() {
         })
       });
 
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
       const data = await response.json();
 
-      if (response.ok && data.success) {
+      if (data.success) {
         setMessage(`✅ ${data.message}`);
         setTimeout(() => setMessage(''), 3000);
       } else {
@@ -337,7 +364,11 @@ export default function Dashboard() {
       }
     } catch (error) {
       console.error('Error triggering event:', error);
-      setMessage(`❌ Network error: ${error.message}`);
+      if (error.message?.includes('404') || error.message?.includes('Not Found')) {
+        setMessage('⚠️ Trigger event endpoint not configured. Event will be logged locally.');
+      } else {
+        setMessage(`❌ Network error: ${error.message}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -351,6 +382,16 @@ export default function Dashboard() {
           <MapComponent 
             routes={[]} 
             accidents={safetyScoreData.map(p => ({ lat: p.lat, lng: p.lng, severity: p.score < 40 ? 'high' : p.score < 60 ? 'medium' : 'low' }))}
+            n8nAlerts={socialFeed.filter(item => item.location).map(item => ({
+              id: item.id,
+              type: item.type,
+              location: item.location,
+              text: item.text,
+              source: item.source,
+              summary: item.text
+            }))}
+            selectedAlertId={selectedAlertId}
+            onAlertFocus={(alertId) => setSelectedAlertId(alertId)}
           />
         </div>
         {/* Map overlay info */}
@@ -444,25 +485,37 @@ export default function Dashboard() {
           {/* Crowd & Traffic Gauges */}
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div className="text-center">
-              <div className="text-xs opacity-70 mb-2">Crowd Density</div>
+              <div className="text-xs opacity-70 mb-2">Crowd Density {n8nDataLoading && <span className="animate-pulse">⏳</span>}</div>
               <div className="relative w-24 h-24 mx-auto">
                 <canvas ref={crowdChartRef} width="96" height="96" />
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="text-center">
-                    <div className="text-lg font-bold">{crowdDensity.value}%</div>
-                    <div className="text-xs opacity-70">{crowdDensity.level}</div>
+                    {crowdDensity ? (
+                      <>
+                        <div className="text-lg font-bold">{crowdDensity.value}%</div>
+                        <div className="text-xs opacity-70">{crowdDensity.level}</div>
+                      </>
+                    ) : (
+                      <div className="text-xs opacity-50">Loading...</div>
+                    )}
                   </div>
                 </div>
               </div>
             </div>
             <div className="text-center">
-              <div className="text-xs opacity-70 mb-2">Traffic Flow</div>
+              <div className="text-xs opacity-70 mb-2">Traffic Flow {n8nDataLoading && <span className="animate-pulse">⏳</span>}</div>
               <div className="relative w-24 h-24 mx-auto">
                 <canvas ref={trafficChartRef} width="96" height="96" />
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="text-center">
-                    <div className="text-lg font-bold">{trafficStatus.value}%</div>
-                    <div className="text-xs opacity-70">{trafficStatus.level}</div>
+                    {trafficStatus ? (
+                      <>
+                        <div className="text-lg font-bold">{trafficStatus.value}%</div>
+                        <div className="text-xs opacity-70">{trafficStatus.level}</div>
+                      </>
+                    ) : (
+                      <div className="text-xs opacity-50">Loading...</div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -492,13 +545,32 @@ export default function Dashboard() {
 
           {/* Social Media Live Feed */}
           <div className="mt-4">
-            <div className="text-sm font-semibold mb-2">📱 Live Social Feed</div>
+            <div className="text-sm font-semibold mb-2">
+              📱 Live Social Feed {n8nDataLoading && <span className="animate-pulse text-xs">⏳</span>}
+            </div>
             <div className="h-32 overflow-y-auto space-y-2 border border-white/10 rounded-lg p-2 bg-black/20">
-              {socialFeed.length === 0 ? (
-                <div className="text-xs opacity-50 text-center py-4">Loading feed...</div>
+              {n8nDataLoading ? (
+                <div className="text-xs opacity-50 text-center py-4">🔄 Fetching data from n8n...</div>
+              ) : socialFeed.length === 0 ? (
+                <div className="text-xs opacity-50 text-center py-4">No data available from n8n</div>
               ) : (
                 socialFeed.slice(0, 10).map((item) => (
-                  <div key={item.id} className="text-xs p-2 rounded bg-white/5 hover:bg-white/10 transition">
+                  <div 
+                    key={item.id} 
+                    onClick={() => {
+                      if (item.location) {
+                        setSelectedAlertId(item.id);
+                      }
+                    }}
+                    className={`text-xs p-2 rounded transition cursor-pointer ${
+                      selectedAlertId === item.id 
+                        ? 'bg-blue-500/30 border-2 border-blue-500' 
+                        : item.location 
+                          ? 'bg-white/5 hover:bg-white/10 border border-transparent hover:border-white/20' 
+                          : 'bg-white/5 opacity-60'
+                    }`}
+                    title={item.location ? `Click to view location: ${item.location}` : 'No location data'}
+                  >
                     <div className="flex items-start gap-2">
                       <span className={`text-xs ${
                         item.type === 'accident' || item.type === 'emergency' ? 'text-red-400' :
@@ -509,8 +581,18 @@ export default function Dashboard() {
                         {item.type === 'accident' ? '🚨' : item.type === 'protest' ? '⚠️' : item.type === 'safe' ? '✅' : '📢'}
                       </span>
                       <div className="flex-1">
-                        <div className="font-medium">{item.text}</div>
-                        <div className="text-xs opacity-50 mt-0.5">{item.source} • {new Date(item.timestamp).toLocaleTimeString()}</div>
+                        <div className="font-medium flex items-center gap-1">
+                          {item.text}
+                          {item.location && (
+                            <span className="text-[10px] opacity-60" title="Has location">
+                              📍
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs opacity-50 mt-0.5">
+                          {item.location && <span className="opacity-70">📍 {item.location} • </span>}
+                          {item.source} • {new Date(item.timestamp).toLocaleTimeString()}
+                        </div>
                       </div>
                     </div>
                   </div>

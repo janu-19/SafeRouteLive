@@ -36,7 +36,13 @@ export default function ContactList({ contacts = [], currentUserId }) {
       });
       setStatusMap(status);
     } catch (error) {
-      console.error('Error loading requests:', error);
+      // Silently handle authentication errors - share features require token
+      if (error.code === 'NO_TOKEN' || error.message?.includes('Authentication')) {
+        // Don't show error, just disable share features
+        console.log('Share features disabled - token required');
+      } else {
+        console.error('Error loading requests:', error);
+      }
     }
   };
 

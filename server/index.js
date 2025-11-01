@@ -541,14 +541,437 @@ app.get('/api/getCrimeData', (req, res) => {
   res.json({ data });
 });
 
+/**
+ * Get accidents from n8n workflow
+ * @param {number} lat - Latitude
+ * @param {number} lng - Longitude
+ * @returns {Promise<Array>} Array of accident incidents from n8n
+ */
+/**
+ * Get comprehensive data from n8n automation (tweets, news, weather, etc.)
+ * @param {number} lat - Latitude
+ * @param {number} lng - Longitude
+ * @returns {Promise<Object>} Normalized data from n8n workflow
+ */
+async function getDataFromN8N(lat, lng) {
+  try {
+    // n8n workflow webhook URL - configure via N8N_WEBHOOK_URL environment variable
+    // Production URL is always active (no need to execute workflow manually)
+    // Test URL requires manual execution each time
+    // To get your webhook URL:
+    // 1. Open your n8n workflow
+    // 2. Click on the "Webhook Trigger" node
+    // 3. Copy the "Production URL" (always active)
+    // 4. Set it as environment variable: N8N_WEBHOOK_URL=https://your-domain.n8n.cloud/webhook/your-webhook-id
+    const n8nWorkflowUrl = process.env.N8N_WEBHOOK_URL || 'https://pramodhkumar.app.n8n.cloud/webhook/saferoute';
+    
+    // Call n8n workflow with location data
+    // Using GET request with query parameters (n8n webhook is configured for GET)
+    const params = new URLSearchParams({
+      lat: lat.toString(),
+      lng: lng.toString(),
+      timestamp: new Date().toISOString()
+    });
+    
+    const response = await fetch(`${n8nWorkflowUrl}?${params}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`n8n workflow error: ${response.status}`);
+    }
+    
+    // Get raw response text first to handle empty responses
+    const rawText = await response.text();
+    let data = {};
+    let parsedContent = null;
+    
+    if (rawText && rawText.trim().length > 0) {
+      try {
+        const responseData = JSON.parse(rawText);
+        
+        // Handle n8n AI response structure: data is in content.parts[0].text as JSON string
+        if (responseData.content && responseData.content.parts && responseData.content.parts[0] && responseData.content.parts[0].text) {
+          let jsonText = responseData.content.parts[0].text;
+          
+          // Remove markdown code block markers (```json and ```)
+          jsonText = jsonText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+          
+          try {
+            parsedContent = JSON.parse(jsonText);
+            console.log('✅ Extracted and parsed JSON from AI response');
+          } catch (parseError) {
+            console.warn('⚠️ Failed to parse JSON from content.parts[0].text:', parseError.message);
+          }
+        }
+        
+        // Use parsed content if available, otherwise use response data directly
+        data = parsedContent || responseData;
+        
+        // Also merge meta data if available
+        if (responseData.meta) {
+          data.meta = responseData.meta;
+        }
+        
+      } catch (e) {
+        console.warn('⚠️ Failed to parse n8n response as JSON, using empty object:', e.message);
+        data = {};
+      }
+    } else {
+      console.warn('⚠️ n8n webhook returned empty response');
+    }
+    
+    // Transform n8n data to our dashboard format
+    // Expected format from n8n: { alerts: [...], weather: {...}, meta: {...} }
+    const normalizedData = {
+      socialFeed: [],
+      weather: null,
+      traffic: null,
+      crowdDensity: null,
+      news: []
+    };
+    
+    // Process alerts array (contains tweets, news, weather events)
+    if (data.alerts && Array.isArray(data.alerts)) {
+      data.alerts.forEach(alert => {
+        const alertSource = alert.source || 'Unknown';
+        const alertText = alert.summary || alert.text || '';
+        const alertType = alert.type || determineType(alertText);
+        
+        normalizedData.socialFeed.push({
+          id: alert.id || `alert-${Date.now()}-${Math.random()}`,
+          source: alertSource,
+          text: alertText,
+          timestamp: alert.timestamp ? new Date(alert.timestamp).getTime() : Date.now(),
+          type: alertType,
+          location: alert.location || null,
+          status: alert.status || null
+        });
+      });
+    }
+    
+    // Process tweets/news if they exist separately
+    if (data.tweets && Array.isArray(data.tweets)) {
+      data.tweets.forEach(tweet => {
+        normalizedData.socialFeed.push({
+          id: `tweet-${tweet.id || Date.now()}-${Math.random()}`,
+          source: 'Twitter',
+          text: tweet.text || tweet.content || '',
+          timestamp: tweet.timestamp || tweet.created_at || Date.now(),
+          type: determineType(tweet.text || tweet.content || ''),
+          url: tweet.url || null
+        });
+      });
+    }
+    
+    if (data.news && Array.isArray(data.news)) {
+      data.news.forEach(article => {
+        normalizedData.socialFeed.push({
+          id: `news-${article.id || Date.now()}-${Math.random()}`,
+          source: article.source?.name || 'News',
+          text: article.title || article.description || '',
+          timestamp: article.publishedAt || article.timestamp || Date.now(),
+          type: determineType(article.title || article.description || ''),
+          url: article.url || null
+        });
+      });
+    }
+    
+    // Process normalized/analyzed data if available
+    if (data.normalized && Array.isArray(data.normalized)) {
+      data.normalized.forEach(item => {
+        normalizedData.socialFeed.push({
+          id: `normalized-${item.id || Date.now()}-${Math.random()}`,
+          source: item.source || 'AI Analysis',
+          text: item.text || item.content || item.message || '',
+          timestamp: item.timestamp || Date.now(),
+          type: item.type || determineType(item.text || item.content || ''),
+        });
+      });
+    }
+    
+    if (data.analyzed && Array.isArray(data.analyzed)) {
+      data.analyzed.forEach(item => {
+        normalizedData.socialFeed.push({
+          id: `analyzed-${item.id || Date.now()}-${Math.random()}`,
+          source: item.source || 'AI Analysis',
+          text: item.message || item.text || item.summary || '',
+          timestamp: item.timestamp || Date.now(),
+          type: item.category || item.type || 'info',
+        });
+      });
+    }
+    
+    // Process weather data - check both root level and meta.weather
+    if (data.weather) {
+      normalizedData.weather = {
+        temperature: data.weather.temp || data.weather.temperature,
+        condition: data.weather.condition || data.weather.description || data.weather.description,
+        humidity: data.weather.humidity,
+        windSpeed: data.weather.windSpeed || data.weather.wind?.speed || data.weather.wind?.speed
+      };
+    } else if (data.meta && data.meta.weather) {
+      normalizedData.weather = {
+        temperature: data.meta.weather.temp,
+        condition: data.meta.weather.description || data.meta.weather.condition,
+        humidity: data.meta.weather.humidity,
+        windSpeed: data.meta.weather.wind?.speed,
+        visibility: data.meta.weather.visibility
+      };
+    }
+    
+    // Extract traffic/crowd data from safety score or alerts
+    if (data.safetyScore !== undefined) {
+      // Map safety score to traffic/crowd (0-100 scale)
+      const score = data.safetyScore;
+      if (score < 40) {
+        normalizedData.traffic = { level: 'Heavy', value: 80 };
+        normalizedData.crowdDensity = { level: 'High', value: 75 };
+      } else if (score < 70) {
+        normalizedData.traffic = { level: 'Moderate', value: 50 };
+        normalizedData.crowdDensity = { level: 'Medium', value: 45 };
+      } else {
+        normalizedData.traffic = { level: 'Free', value: 20 };
+        normalizedData.crowdDensity = { level: 'Low', value: 25 };
+      }
+    }
+    
+    // Try to extract traffic/crowd data from analyzed data
+    if (data.analyzed) {
+      const trafficInfo = data.analyzed.find(item => 
+        item.type === 'traffic' || item.category === 'traffic' || 
+        (item.text && item.text.toLowerCase().includes('traffic'))
+      );
+      if (trafficInfo) {
+        normalizedData.traffic = {
+          level: trafficInfo.level || 'Moderate',
+          value: trafficInfo.value || 50
+        };
+      }
+      
+      const crowdInfo = data.analyzed.find(item => 
+        item.type === 'crowd' || item.category === 'crowd' || 
+        (item.text && item.text.toLowerCase().includes('crowd'))
+      );
+      if (crowdInfo) {
+        normalizedData.crowdDensity = {
+          level: crowdInfo.level || 'Medium',
+          value: crowdInfo.value || 45
+        };
+      }
+    }
+    
+    // Sort social feed by timestamp (newest first)
+    normalizedData.socialFeed.sort((a, b) => b.timestamp - a.timestamp);
+    
+    if (normalizedData.socialFeed.length > 0) {
+      console.log(`✅ Fetched ${normalizedData.socialFeed.length} items from n8n workflow`);
+    } else {
+      console.log('⚠️ No data found in n8n response, returning empty structure');
+    }
+    return normalizedData;
+  } catch (error) {
+    console.error('Error fetching data from n8n:', error.message);
+    // Return empty structure instead of throwing to allow fallback
+    return {
+      socialFeed: [],
+      weather: null,
+      traffic: null,
+      crowdDensity: null,
+      news: []
+    };
+  }
+}
+
+/**
+ * Helper function to determine message type from text content
+ */
+function determineType(text) {
+  const lowerText = text.toLowerCase();
+  if (lowerText.includes('accident') || lowerText.includes('crash') || lowerText.includes('collision')) {
+    return 'accident';
+  }
+  if (lowerText.includes('protest') || lowerText.includes('demonstration') || lowerText.includes('march')) {
+    return 'protest';
+  }
+  if (lowerText.includes('emergency') || lowerText.includes('sos') || lowerText.includes('urgent')) {
+    return 'emergency';
+  }
+  if (lowerText.includes('roadwork') || lowerText.includes('construction') || lowerText.includes('repair')) {
+    return 'roadwork';
+  }
+  if (lowerText.includes('safe') || lowerText.includes('clear') || lowerText.includes('all good')) {
+    return 'safe';
+  }
+  if (lowerText.includes('crowd') || lowerText.includes('people') || lowerText.includes('gathering')) {
+    return 'crowd';
+  }
+  return 'info';
+}
+
+async function getAccidentsFromN8N(lat, lng) {
+  try {
+    // n8n workflow webhook URL - can be configured via environment variable
+    // Production webhook URL (always active): https://pramodhkumar.app.n8n.cloud/webhook/saferoute
+    // Test webhook URL (requires manual execution): https://pramodhkumar.app.n8n.cloud/webhook-test/saferoute
+    // Webhook URL format: https://[domain].n8n.cloud/webhook/[webhook-id]
+    // Note: Production webhook is always active - no need to execute workflow manually
+    const n8nWorkflowUrl = process.env.N8N_WEBHOOK_URL || 'https://pramodhkumar.app.n8n.cloud/webhook/saferoute';
+    
+    // Call n8n workflow with location data
+    // Using GET request with query parameters (n8n webhook is configured for GET)
+    const params = new URLSearchParams({
+      lat: lat.toString(),
+      lng: lng.toString(),
+      timestamp: new Date().toISOString()
+    });
+    
+    const response = await fetch(`${n8nWorkflowUrl}?${params}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`n8n workflow error: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    // Transform n8n data to our format
+    // Assuming n8n returns data in format: { accidents: [...], weather: [...], news: [...] }
+    const accidents = [];
+    
+    // Handle different possible response formats
+    if (data.accidents && Array.isArray(data.accidents)) {
+      data.accidents.forEach(accident => {
+        if (accident.lat && accident.lng) {
+          accidents.push({
+            lat: parseFloat(accident.lat),
+            lng: parseFloat(accident.lng),
+            severity: accident.severity || (accident.type === 'severe' ? 'high' : accident.type === 'moderate' ? 'medium' : 'low'),
+            timestamp: accident.timestamp || Date.now(),
+            type: accident.type || 'accident',
+            source: accident.source || 'n8n',
+            description: accident.description || accident.text || '',
+            weather: accident.weather || null,
+            news: accident.news || null
+          });
+        }
+      });
+    } else if (Array.isArray(data)) {
+      // If n8n returns array directly
+      data.forEach(item => {
+        if (item.lat && item.lng) {
+          accidents.push({
+            lat: parseFloat(item.lat),
+            lng: parseFloat(item.lng),
+            severity: item.severity || 'medium',
+            timestamp: item.timestamp || Date.now(),
+            type: item.type || 'accident',
+            source: item.source || 'n8n',
+            description: item.description || item.text || '',
+            weather: item.weather || null,
+            news: item.news || null
+          });
+        }
+      });
+    } else if (data.data && Array.isArray(data.data)) {
+      // If wrapped in data property
+      data.data.forEach(accident => {
+        if (accident.lat && accident.lng) {
+          accidents.push({
+            lat: parseFloat(accident.lat),
+            lng: parseFloat(accident.lng),
+            severity: accident.severity || 'medium',
+            timestamp: accident.timestamp || Date.now(),
+            type: accident.type || 'accident',
+            source: accident.source || 'n8n',
+            description: accident.description || accident.text || '',
+            weather: accident.weather || null,
+            news: accident.news || null
+          });
+        }
+      });
+    }
+    
+    console.log(`✅ Fetched ${accidents.length} accidents from n8n workflow`);
+    return accidents;
+  } catch (error) {
+    console.error('Error fetching accidents from n8n:', error.message);
+    throw error;
+  }
+}
+
 app.get('/api/getAccidents', async (req, res) => {
   try {
     const { lat = 12.9716, lng = 77.5946 } = req.query;
-    const data = await getAccidentsFromTomTom(parseFloat(lat), parseFloat(lng));
-    res.json({ data });
+    
+    // Try n8n workflow first
+    let accidents = [];
+    try {
+      accidents = await getAccidentsFromN8N(parseFloat(lat), parseFloat(lng));
+      if (accidents.length > 0) {
+        console.log(`✅ Using ${accidents.length} accidents from n8n workflow`);
+        return res.json({ data: accidents });
+      }
+    } catch (n8nError) {
+      console.log('⚠️ n8n workflow failed, falling back to TomTom:', n8nError.message);
+    }
+    
+    // Fallback to TomTom API
+    try {
+      accidents = await getAccidentsFromTomTom(parseFloat(lat), parseFloat(lng));
+      if (accidents.length > 0) {
+        console.log(`✅ Using ${accidents.length} accidents from TomTom API`);
+        return res.json({ data: accidents });
+      }
+    } catch (tomTomError) {
+      console.log('⚠️ TomTom API failed, falling back to mock:', tomTomError.message);
+    }
+    
+    // Final fallback to mock data
+    console.log('⚠️ Using mock accident data');
+    res.json({ data: generateMockAccidents() });
   } catch (error) {
     console.error('Error in /api/getAccidents:', error);
     res.json({ data: generateMockAccidents() }); // Fallback to mock
+  }
+});
+
+/**
+ * Get comprehensive dashboard data from n8n automation
+ * This endpoint fetches tweets, news, weather, and analyzed data from n8n workflow
+ */
+app.get('/api/getN8NData', async (req, res) => {
+  try {
+    const { lat = 12.9716, lng = 77.5946 } = req.query;
+    
+    // Fetch data from n8n workflow
+    const n8nData = await getDataFromN8N(parseFloat(lat), parseFloat(lng));
+    
+    return res.json({
+      success: true,
+      data: n8nData
+    });
+  } catch (error) {
+    console.error('Error in /api/getN8NData:', error);
+    // Return empty structure on error so dashboard can still use fallback data
+    res.json({
+      success: false,
+      data: {
+        socialFeed: [],
+        weather: null,
+        traffic: null,
+        crowdDensity: null,
+        news: []
+      },
+      error: error.message
+    });
   }
 });
 
@@ -1030,6 +1453,45 @@ app.get('/api/ai-safety-suggestion', (req, res) => {
   }
 });
 
+// Trigger safety event endpoint
+app.post('/api/trigger-event', (req, res) => {
+  try {
+    const { lat, lng, severity, eventType } = req.body;
+    
+    if (!lat || !lng || !eventType) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Missing required fields: lat, lng, eventType' 
+      });
+    }
+    
+    // Emit event to all connected sockets
+    io.emit('safety-update', {
+      type: 'live-event',
+      event: {
+        lat: parseFloat(lat),
+        lng: parseFloat(lng),
+        severity: severity || 'medium',
+        eventType: eventType,
+        timestamp: Date.now()
+      }
+    });
+    
+    console.log(`✅ Safety event triggered: ${eventType} at [${lat}, ${lng}]`);
+    
+    res.json({
+      success: true,
+      message: `Safety event "${eventType}" triggered successfully`
+    });
+  } catch (error) {
+    console.error('Error in /api/trigger-event:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to trigger event'
+    });
+  }
+});
+
 // SOS endpoint (mock Twilio)
 app.post('/api/sos', (req, res) => {
   const { location, message } = req.body;
@@ -1046,9 +1508,46 @@ app.post('/api/sos', (req, res) => {
   });
 });
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📡 API endpoints available at /api/*`);
   console.log(`🔌 Socket.IO server ready for connections`);
+  
+  // Verify n8n webhook is accessible on startup
+  const n8nWorkflowUrl = process.env.N8N_WEBHOOK_URL || 'https://pramodhkumar.app.n8n.cloud/webhook/saferoute';
+  console.log(`\n🔍 Verifying n8n webhook connection...`);
+  console.log(`   URL: ${n8nWorkflowUrl}`);
+  
+  try {
+    const testParams = new URLSearchParams({
+      lat: '12.9716',
+      lng: '77.5946',
+      timestamp: new Date().toISOString()
+    });
+    
+    const response = await fetch(`${n8nWorkflowUrl}?${testParams}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    if (response.ok) {
+      const responseText = await response.text();
+      if (responseText && responseText.length > 0) {
+        console.log(`✅ n8n webhook is active and responding`);
+        console.log(`   Response: ${responseText.substring(0, 100)}...`);
+      } else {
+        console.log(`⚠️ n8n webhook responded but returned empty data`);
+        console.log(`   Make sure your workflow is active and Webhook Response node is configured`);
+      }
+    } else {
+      console.log(`⚠️ n8n webhook returned status ${response.status}`);
+      console.log(`   Check that your workflow is saved and active in n8n`);
+    }
+  } catch (error) {
+    console.log(`⚠️ Could not verify n8n webhook: ${error.message}`);
+    console.log(`   The server will continue, but n8n integration may not work`);
+  }
+  
+  console.log(`\n✨ Ready to accept requests!\n`);
 });
 
