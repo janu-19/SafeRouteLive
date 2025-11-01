@@ -1,12 +1,19 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import mongoose from 'mongoose';
 
 // Node.js 18+ has native fetch support
 // If using Node.js < 18, uncomment: import fetch from 'node-fetch';
+
+// Import share routes and socket handlers
+import shareRoutes from './src/routes/shareRoutes.js';
+import { initializeShareSocketHandlers, setIo as setShareSocketIo } from './src/sockets/liveTrackingSocket.js';
+import { setIo as setShareControllerIo } from './src/controllers/shareController.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -14,6 +21,21 @@ const __dirname = dirname(__filename);
 const app = express();
 const httpServer = createServer(app);
 const PORT = process.env.PORT || 3001;
+
+// MongoDB connection
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/saferoute';
+
+console.log('🔍 MongoDB URI from env:', process.env.MONGODB_URI ? 'Found' : 'NOT FOUND');
+console.log('🔍 Will connect to:', MONGODB_URI.substring(0, 50) + '...' || MONGODB_URI);
+
+mongoose.connect(MONGODB_URI)
+  .then(() => {
+    console.log('✅ Connected to MongoDB:', MONGODB_URI.substring(0, 50) + '...' || MONGODB_URI);
+  })
+  .catch((error) => {
+    console.error('❌ MongoDB connection error:', error.message);
+    console.warn('⚠️  Continuing without MongoDB. Some features may not work.');
+  });
 
 app.use(cors());
 app.use(express.json());
@@ -26,6 +48,17 @@ const io = new Server(httpServer, {
     credentials: true
   }
 });
+
+// Pass io instance to share controller and socket handlers
+setShareControllerIo(io);
+setShareSocketIo(io);
+
+// Register share routes
+app.use('/api/share', shareRoutes);
+
+// Initialize share socket handlers (with authentication)
+// This replaces the default io.on('connection') for share functionality
+initializeShareSocketHandlers(io);
 
 // Room management (in-memory storage)
 const rooms = new Map();
