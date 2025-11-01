@@ -13,8 +13,9 @@ export default function Home() {
           <p className="mt-4 text-slate-300 text-lg">Travel Smart. Travel Safe.</p>
           <p className="mt-2 text-slate-400">Plan safer routes, share live tracking, and get real-time safety insights.
           </p>
-          <div className="mt-8 flex justify-center gap-3">
-            <Link to="/route-planner" className="px-5 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 hover:brightness-110">Plan a Route</Link>
+          <div className="mt-8 flex justify-center gap-3 flex-wrap">
+            <Link to="/route-planner" className="px-5 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 hover:brightness-110 font-semibold">Plan a Route</Link>
+            <Link to="/share" className="px-5 py-3 rounded-xl bg-gradient-to-r from-green-600 to-teal-600 hover:brightness-110 font-semibold">🔵 Share Live Location</Link>
             <Link to="/dashboard" className="px-5 py-3 rounded-xl glass hover:bg-white/10">View Live Safety Map</Link>
           </div>
         </motion.div>
