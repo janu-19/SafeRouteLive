@@ -16,6 +16,7 @@ export default function Navbar() {
             <div className="hidden md:flex items-center gap-6 text-sm text-slate-200">
               <NavLink to="/" className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Home</NavLink>
               <NavLink to="/route-planner" className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Route Planner</NavLink>
+              <NavLink to="/share" className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Share Live</NavLink>
               <NavLink to="/dashboard" className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Dashboard</NavLink>
               <NavLink to="/login" className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Login</NavLink>
               <ThemeToggle />
@@ -29,6 +30,7 @@ export default function Navbar() {
               <div className="mt-2 flex flex-col gap-2 text-sm">
                 <NavLink to="/" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Home</NavLink>
                 <NavLink to="/route-planner" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Route Planner</NavLink>
+                <NavLink to="/share" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Share Live</NavLink>
                 <NavLink to="/dashboard" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Dashboard</NavLink>
                 <NavLink to="/login" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Login</NavLink>
                 <div className="pt-2"><ThemeToggle /></div>
