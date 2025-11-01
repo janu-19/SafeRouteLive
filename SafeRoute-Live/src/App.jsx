@@ -9,6 +9,7 @@ import Dashboard from './pages/Dashboard.jsx';
 import Login from './pages/Login.jsx';
 import Share from './pages/Share.jsx';
 import SOS from './pages/SOS.jsx';
+import AIChatbot from './pages/AIChatbot.jsx';
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/login" element={<Login />} />
             <Route path="/sos" element={<SOS />} />
+            <Route path="/ai-chatbot" element={<AIChatbot />} />
           </Routes>
         </div>
       </div>

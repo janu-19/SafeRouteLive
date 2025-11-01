@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Route, Send, ChevronUp, ChevronDown } from 'lucide-react';
+import { AlertTriangle, Route, Send, ChevronUp, ChevronDown, MessageCircle } from 'lucide-react';
 import { sendSOSAlert } from '../utils/api';
 
 export default function FloatingButtons({ onRecalculate, location }) {
@@ -25,6 +25,11 @@ export default function FloatingButtons({ onRecalculate, location }) {
 
   const handleShareLive = () => {
     navigate('/share');
+  };
+
+  const handleAIChatbot = () => {
+    // Open AI Chatbot - will create a modal or navigate to chatbot page
+    navigate('/ai-chatbot');
   };
 
   return (
@@ -108,6 +113,37 @@ export default function FloatingButtons({ onRecalculate, location }) {
         </span>
       </button>
 
+      {/* AI Chatbot Button */}
+      <button
+        onClick={handleAIChatbot}
+        className="btn-secondary group relative w-14 h-14 rounded-full flex items-center justify-center 
+                   hover:brightness-110 
+                   active:scale-95 
+                   shadow-lg 
+                   hover:shadow-xl 
+                   border-2 border-white/50 
+                   backdrop-blur-sm 
+                   transition-all duration-200 
+                   hover:scale-105"
+        aria-label="AI Chatbot"
+        title="AI Chatbot"
+      >
+        <MessageCircle 
+          size={24} 
+          className="text-white drop-shadow-sm" 
+        />
+        {/* Tooltip */}
+        <span className="absolute right-full mr-3 px-3 py-1.5 rounded-lg 
+                        bg-gray-900/95 text-white text-xs font-medium 
+                        whitespace-nowrap opacity-0 group-hover:opacity-100 
+                        transition-opacity duration-200 pointer-events-none
+                        shadow-lg backdrop-blur-sm border border-white/10">
+          AI Chatbot
+          <span className="absolute left-full top-1/2 -translate-y-1/2 
+                          border-4 border-transparent border-l-gray-900/95"></span>
+        </span>
+      </button>
+
       {/* Share Location Button */}
       <button
         onClick={handleShareLive}
@@ -128,14 +164,14 @@ export default function FloatingButtons({ onRecalculate, location }) {
           className="text-white drop-shadow-sm" 
         />
         {/* Tooltip */}
-        <span className="absolute left-full ml-3 px-3 py-1.5 rounded-lg 
+        <span className="absolute right-full mr-3 px-3 py-1.5 rounded-lg 
                         bg-gray-900/95 text-white text-xs font-medium 
                         whitespace-nowrap opacity-0 group-hover:opacity-100 
                         transition-opacity duration-200 pointer-events-none
                         shadow-lg backdrop-blur-sm border border-white/10">
           Share Location
-          <span className="absolute right-full top-1/2 -translate-y-1/2 
-                          border-4 border-transparent border-r-gray-900/95"></span>
+          <span className="absolute left-full top-1/2 -translate-y-1/2 
+                          border-4 border-transparent border-l-gray-900/95"></span>
         </span>
       </button>
       </div>
