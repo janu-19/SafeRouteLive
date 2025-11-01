@@ -29,6 +29,7 @@ export default function LiveTracking() {
   const mapRef = useRef(null);
   const userIdRef = useRef(`user_${Math.random().toString(36).slice(2, 9)}`);
   const watchPositionCleanupRef = useRef(null);
+  const hasCenteredRef = useRef(false);
 
   // Initialize socket connection
   useEffect(() => {
@@ -175,6 +176,19 @@ export default function LiveTracking() {
       });
     }
   }, []);
+
+  // Automatically center map on user location when it's first received
+  useEffect(() => {
+    if (location && mapRef.current && !hasCenteredRef.current) {
+      mapRef.current.flyTo({
+        center: [location.longitude, location.latitude],
+        zoom: 16,
+        duration: 1500,
+        essential: true
+      });
+      hasCenteredRef.current = true;
+    }
+  }, [location]);
 
   // Handle share
   const handleShare = useCallback(() => {
