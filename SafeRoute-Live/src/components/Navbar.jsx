@@ -2,38 +2,41 @@ import { Link, NavLink } from 'react-router-dom';
 import { useState } from 'react';
 import { Menu } from 'lucide-react';
 import ThemeToggle from './ThemeToggle.jsx';
+import ThemeSelector from './ThemeSelector.jsx';
 
 export default function Navbar() {
   const [open, setOpen] = useState(false);
   return (
     <header className="fixed top-0 left-0 right-0 z-50">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-        <div className="glass mt-3 rounded-2xl">
-          <div className="flex h-12 items-center justify-between px-4">
-            <Link to="/" className="font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 via-violet-400 to-indigo-400 tracking-tight">
+      <div className="glass border-b border-slate-200/50 dark:border-slate-700/50">
+        <div className="mx-auto max-w-7xl">
+          <div className="flex h-12 items-center justify-between px-6">
+            <Link to="/" className="text-base font-semibold text-slate-900 dark:text-white tracking-tight hover:opacity-70 transition-opacity">
               SafeRoute Live
             </Link>
-            <div className="hidden md:flex items-center gap-6 text-sm text-slate-700 dark:text-slate-200">
-              <NavLink to="/" className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Home</NavLink>
-              <NavLink to="/route-planner" className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Route Planner</NavLink>
-              <NavLink to="/share" className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Share Live</NavLink>
-              <NavLink to="/dashboard" className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Dashboard</NavLink>
-              <NavLink to="/login" className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Login</NavLink>
+            <nav className="hidden md:flex items-center gap-2 text-sm absolute left-1/2 -translate-x-1/2">
+              <NavLink to="/" className={({ isActive }) => isActive ? 'text-primary px-3 py-1.5 rounded-md bg-slate-200/60 dark:bg-slate-800/60 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:text-primary hover:bg-slate-200/60 dark:hover:bg-slate-800/60 transition-all px-3 py-1.5 rounded-md'}>Home</NavLink>
+              <NavLink to="/route-planner" className={({ isActive }) => isActive ? 'text-primary px-3 py-1.5 rounded-md bg-slate-200/60 dark:bg-slate-800/60 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:text-primary hover:bg-slate-200/60 dark:hover:bg-slate-800/60 transition-all px-3 py-1.5 rounded-md'}>Route Planner</NavLink>
+              <NavLink to="/share" className={({ isActive }) => isActive ? 'text-primary px-3 py-1.5 rounded-md bg-slate-200/60 dark:bg-slate-800/60 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:text-primary hover:bg-slate-200/60 dark:hover:bg-slate-800/60 transition-all px-3 py-1.5 rounded-md'}>Share Live</NavLink>
+              <NavLink to="/dashboard" className={({ isActive }) => isActive ? 'text-primary px-3 py-1.5 rounded-md bg-slate-200/60 dark:bg-slate-800/60 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:text-primary hover:bg-slate-200/60 dark:hover:bg-slate-800/60 transition-all px-3 py-1.5 rounded-md'}>Dashboard</NavLink>
+              <NavLink to="/login" className={({ isActive }) => isActive ? 'text-primary px-3 py-1.5 rounded-md bg-slate-200/60 dark:bg-slate-800/60 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:text-primary hover:bg-slate-200/60 dark:hover:bg-slate-800/60 transition-all px-3 py-1.5 rounded-md'}>Login</NavLink>
+            </nav>
+            <div className="flex items-center gap-2">
+              <ThemeSelector />
               <ThemeToggle />
+              <button className="md:hidden text-slate-700 dark:text-slate-200" onClick={() => setOpen(v => !v)} aria-label="Menu">
+                <Menu size={20} />
+              </button>
             </div>
-            <button className="md:hidden" onClick={() => setOpen(v => !v)} aria-label="Menu">
-              <Menu size={20} />
-            </button>
           </div>
           {open && (
-            <div className="md:hidden px-4 pb-3">
-              <div className="mt-2 flex flex-col gap-2 text-sm text-slate-700 dark:text-slate-200">
-                <NavLink to="/" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Home</NavLink>
-                <NavLink to="/route-planner" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Route Planner</NavLink>
-                <NavLink to="/share" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Share Live</NavLink>
-                <NavLink to="/dashboard" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Dashboard</NavLink>
-                <NavLink to="/login" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Login</NavLink>
-                <div className="pt-2"><ThemeToggle /></div>
+            <div className="md:hidden px-6 pb-4 border-t border-slate-200/50 dark:border-slate-700/50">
+              <div className="mt-3 flex flex-col gap-1 text-sm">
+                <NavLink to="/" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-primary py-2 px-3 rounded-md bg-slate-200/60 dark:bg-slate-800/60 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:text-primary hover:bg-slate-200/60 dark:hover:bg-slate-800/60 py-2 px-3 rounded-md transition-all'}>Home</NavLink>
+                <NavLink to="/route-planner" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-primary py-2 px-3 rounded-md bg-slate-200/60 dark:bg-slate-800/60 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:text-primary hover:bg-slate-200/60 dark:hover:bg-slate-800/60 py-2 px-3 rounded-md transition-all'}>Route Planner</NavLink>
+                <NavLink to="/share" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-primary py-2 px-3 rounded-md bg-slate-200/60 dark:bg-slate-800/60 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:text-primary hover:bg-slate-200/60 dark:hover:bg-slate-800/60 py-2 px-3 rounded-md transition-all'}>Share Live</NavLink>
+                <NavLink to="/dashboard" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-primary py-2 px-3 rounded-md bg-slate-200/60 dark:bg-slate-800/60 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:text-primary hover:bg-slate-200/60 dark:hover:bg-slate-800/60 py-2 px-3 rounded-md transition-all'}>Dashboard</NavLink>
+                <NavLink to="/login" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-primary py-2 px-3 rounded-md bg-slate-200/60 dark:bg-slate-800/60 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:text-primary hover:bg-slate-200/60 dark:hover:bg-slate-800/60 py-2 px-3 rounded-md transition-all'}>Login</NavLink>
               </div>
             </div>
           )}

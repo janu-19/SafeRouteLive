@@ -532,7 +532,7 @@ function calculateSafetyScore(route, preference, crimeData, accidents, traffic, 
 function getRouteColor(score) {
   if (score > 75) return '#22c55e'; // Green
   if (score >= 50) return '#f59e0b'; // Yellow
-  return '#ef4444'; // Red
+  return '#3b82f6'; // Blue
 }
 
 // API Routes

@@ -496,7 +496,7 @@ export default function RoutePlanner() {
         <div className="space-y-2">
           {routes.length === 0 && !loading && (
             <div className="text-center text-sm opacity-60 py-8">
-              Enter source and destination to find safe routes
+
             </div>
           )}
           {routes.map((r, index) => (

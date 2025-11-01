@@ -32,7 +32,11 @@ export function getCurrentPosition(options = {}) {
         });
       },
       (error) => {
-        reject(new Error(`Geolocation error: ${error.message}`));
+        // Preserve error code for better error handling
+        const err = new Error(`Geolocation error: ${error.message}`);
+        err.code = error.code;
+        err.name = error.name || 'GeolocationError';
+        reject(err);
       },
       { ...defaultOptions, ...options }
     );
@@ -72,6 +76,7 @@ export function watchPosition(onSuccess, onError, options = {}) {
       });
     },
     (error) => {
+      // Pass the error object directly (includes code property)
       onError(error);
     },
     { ...defaultOptions, ...options }

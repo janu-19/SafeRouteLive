@@ -136,4 +136,40 @@ export async function getN8NData(lat = null, lng = null) {
   return res.json();
 }
 
+/**
+ * Reverse geocode coordinates to get address/location name
+ * @param {number} longitude - Longitude coordinate
+ * @param {number} latitude - Latitude coordinate
+ * @returns {Promise<string>} Location name/address
+ */
+export async function reverseGeocode(longitude, latitude) {
+  const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
+  if (!MAPBOX_TOKEN) return null;
+  
+  try {
+    const params = new URLSearchParams({
+      access_token: MAPBOX_TOKEN,
+      limit: '1'
+    });
+    
+    const res = await fetch(
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${longitude},${latitude}.json?${params}`
+    );
+    
+    if (!res.ok) return null;
+    
+    const data = await res.json();
+    if (data.features && data.features.length > 0) {
+      // Get the most relevant place name (usually the place feature)
+      const feature = data.features[0];
+      return feature.place_name || feature.text || null;
+    }
+    
+    return null;
+  } catch (err) {
+    console.error('Error reverse geocoding:', err);
+    return null;
+  }
+}
+
 
