@@ -510,6 +510,9 @@ export default function RoutePlanner() {
               metadata={r.metadata}
               isARecommended={r.isARecommended}
               index={index}
+              source={source}
+              destination={dest}
+              geometry={r.geometry}
             />
           ))}
         </div>
