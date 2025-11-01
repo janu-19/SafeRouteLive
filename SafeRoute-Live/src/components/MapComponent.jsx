@@ -418,17 +418,16 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
         if (sourceCoords) {
           const el = document.createElement('div');
           el.className = 'custom-marker';
-          el.style.width = '32px';
-          el.style.height = '32px';
-          el.style.borderRadius = '50%';
-          el.style.backgroundColor = '#22c55e';
-          el.style.border = '3px solid white';
-          el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
-          el.style.display = 'flex';
-          el.style.alignItems = 'center';
-          el.style.justifyContent = 'center';
-          el.innerHTML = '📍';
-          el.style.fontSize = '16px';
+          el.style.width = '40px';
+          el.style.height = '40px';
+          el.innerHTML = `
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#22c55e" stroke="white" stroke-width="2"/>
+              <circle cx="12" cy="9" r="2.5" fill="white"/>
+            </svg>
+          `;
+          el.style.cursor = 'pointer';
+          el.style.filter = 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))';
           
           startMarkerRef.current = new mapboxgl.Marker(el)
             .setLngLat(sourceCoords)
@@ -443,17 +442,16 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
         if (destCoords) {
           const el = document.createElement('div');
           el.className = 'custom-marker';
-          el.style.width = '32px';
-          el.style.height = '32px';
-          el.style.borderRadius = '50%';
-          el.style.backgroundColor = '#ef4444';
-          el.style.border = '3px solid white';
-          el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
-          el.style.display = 'flex';
-          el.style.alignItems = 'center';
-          el.style.justifyContent = 'center';
-          el.innerHTML = '🎯';
-          el.style.fontSize = '16px';
+          el.style.width = '40px';
+          el.style.height = '40px';
+          el.innerHTML = `
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#ef4444" stroke="white" stroke-width="2"/>
+              <circle cx="12" cy="9" r="2.5" fill="white"/>
+            </svg>
+          `;
+          el.style.cursor = 'pointer';
+          el.style.filter = 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))';
           
           endMarkerRef.current = new mapboxgl.Marker(el)
             .setLngLat(destCoords)

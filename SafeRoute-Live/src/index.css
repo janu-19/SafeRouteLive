@@ -2,6 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme CSS Variables */
+:root {
+	--color-primary: #3b82f6;
+	--color-secondary: #06b6d4;
+	--color-accent: #8b5cf6;
+	--color-success: #22c55e;
+	--color-warning: #f59e0b;
+	--color-danger: #ef4444;
+	--color-bg-light: #eff6ff;
+	--color-bg-dark: #0c4a6e;
+	--color-text-light: #1e40af;
+	--color-text-dark: #93c5fd;
+}
+
 /* App globals */
 html, body, #root {
 	width: 100%;
@@ -11,6 +25,96 @@ html, body, #root {
 
 .glass {
 	@apply bg-white/70 dark:bg-white/10 dark:dark:bg-black/30 backdrop-blur-md border border-slate-300/50 dark:border-white/20 dark:dark:border-white/10 shadow-xl;
+}
+
+/* Theme-aware button classes */
+.btn-primary {
+	background-color: var(--color-primary);
+}
+
+.btn-secondary {
+	background-color: var(--color-secondary);
+}
+
+.btn-success {
+	background-color: var(--color-success);
+}
+
+.btn-warning {
+	background-color: var(--color-warning);
+}
+
+.btn-danger {
+	background-color: var(--color-danger);
+}
+
+/* Theme-aware text colors */
+.text-primary {
+	color: var(--color-primary);
+}
+
+.text-secondary {
+	color: var(--color-secondary);
+}
+
+.text-accent {
+	color: var(--color-accent);
+}
+
+/* Theme-aware borders */
+.border-primary {
+	border-color: var(--color-primary);
+}
+
+.border-secondary {
+	border-color: var(--color-secondary);
+}
+
+.border-accent {
+	border-color: var(--color-accent);
+}
+
+/* Theme-aware shadows */
+.shadow-primary {
+	box-shadow: 0 10px 25px -5px var(--color-primary), 0 8px 10px -6px var(--color-primary);
+}
+
+.shadow-secondary {
+	box-shadow: 0 10px 25px -5px var(--color-secondary), 0 8px 10px -6px var(--color-secondary);
+}
+
+/* Theme-aware backgrounds */
+.bg-theme-light {
+	background-color: var(--color-bg-light);
+}
+
+.bg-theme-dark {
+	background-color: var(--color-bg-dark);
+}
+
+/* Theme-aware text */
+.text-theme-light {
+	color: var(--color-text-light);
+}
+
+.text-theme-dark {
+	color: var(--color-text-dark);
+}
+
+/* Theme-aware hover states */
+.hover-primary:hover {
+	background-color: var(--color-primary);
+	color: white;
+}
+
+.hover-text-primary:hover {
+	color: var(--color-primary);
+}
+
+/* Theme-aware glass effect */
+.glass-theme {
+	background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+	opacity: 0.1;
 }
 
 

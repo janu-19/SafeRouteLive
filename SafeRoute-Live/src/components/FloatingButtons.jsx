@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Route, Send } from 'lucide-react';
+import { AlertTriangle, Route, Send, ChevronUp, ChevronDown } from 'lucide-react';
 import { sendSOSAlert } from '../utils/api';
 
 export default function FloatingButtons({ onRecalculate, location }) {
   const navigate = useNavigate();
   const [sosLoading, setSosLoading] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(true);
 
   const handleSOS = async () => {
     setSosLoading(true);
@@ -27,18 +28,32 @@ export default function FloatingButtons({ onRecalculate, location }) {
   };
 
   return (
-    <div className="absolute right-4 bottom-20 flex flex-col space-y-3 z-50">
-      {/* SOS Alert Button */}
+    <div className="absolute left-4 bottom-20 flex flex-col-reverse gap-3 z-50">
+      {/* Toggle Button */}
       <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-12 h-12 rounded-full flex items-center justify-center 
+                   bg-slate-800/90 hover:bg-slate-700 
+                   border-2 border-slate-600/50 
+                   backdrop-blur-sm shadow-lg 
+                   transition-all duration-200 hover:scale-105"
+        aria-label={isExpanded ? "Hide buttons" : "Show buttons"}
+      >
+        {isExpanded ? <ChevronDown size={20} className="text-white" /> : <ChevronUp size={20} className="text-white" />}
+      </button>
+
+      {/* Buttons Container */}
+      <div className={`flex flex-col-reverse space-y-3 space-y-reverse transition-all duration-300 ${isExpanded ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full pointer-events-none'}`}>
+        {/* SOS Alert Button */}
+        <button
         onClick={handleSOS}
         disabled={sosLoading}
-        className="group relative w-14 h-14 rounded-full flex items-center justify-center 
-                   bg-gradient-to-br from-red-500/90 to-red-600/90 
-                   hover:from-red-600 hover:to-red-700 
+        className="btn-danger group relative w-14 h-14 rounded-full flex items-center justify-center 
+                   hover:brightness-110 
                    active:scale-95 
-                   shadow-lg shadow-red-500/30 
-                   hover:shadow-xl hover:shadow-red-500/50 
-                   border-2 border-red-400/50 
+                   shadow-lg 
+                   hover:shadow-xl 
+                   border-2 border-white/50 
                    backdrop-blur-sm 
                    transition-all duration-200 
                    disabled:opacity-50 disabled:cursor-not-allowed
@@ -65,13 +80,12 @@ export default function FloatingButtons({ onRecalculate, location }) {
       {/* Find Route Button */}
       <button
         onClick={onRecalculate}
-        className="group relative w-14 h-14 rounded-full flex items-center justify-center 
-                   bg-gradient-to-br from-green-500/90 to-emerald-600/90 
-                   hover:from-green-600 hover:to-emerald-700 
+        className="btn-success group relative w-14 h-14 rounded-full flex items-center justify-center 
+                   hover:brightness-110 
                    active:scale-95 
-                   shadow-lg shadow-green-500/30 
-                   hover:shadow-xl hover:shadow-green-500/50 
-                   border-2 border-green-400/50 
+                   shadow-lg 
+                   hover:shadow-xl 
+                   border-2 border-white/50 
                    backdrop-blur-sm 
                    transition-all duration-200 
                    hover:scale-105"
@@ -97,13 +111,12 @@ export default function FloatingButtons({ onRecalculate, location }) {
       {/* Share Location Button */}
       <button
         onClick={handleShareLive}
-        className="group relative w-14 h-14 rounded-full flex items-center justify-center 
-                   bg-gradient-to-br from-blue-500/90 to-indigo-600/90 
-                   hover:from-blue-600 hover:to-indigo-700 
+        className="btn-primary group relative w-14 h-14 rounded-full flex items-center justify-center 
+                   hover:brightness-110 
                    active:scale-95 
-                   shadow-lg shadow-blue-500/30 
-                   hover:shadow-xl hover:shadow-blue-500/50 
-                   border-2 border-blue-400/50 
+                   shadow-lg 
+                   hover:shadow-xl 
+                   border-2 border-white/50 
                    backdrop-blur-sm 
                    transition-all duration-200 
                    hover:scale-105"
@@ -115,16 +128,17 @@ export default function FloatingButtons({ onRecalculate, location }) {
           className="text-white drop-shadow-sm" 
         />
         {/* Tooltip */}
-        <span className="absolute right-full mr-3 px-3 py-1.5 rounded-lg 
+        <span className="absolute left-full ml-3 px-3 py-1.5 rounded-lg 
                         bg-gray-900/95 text-white text-xs font-medium 
                         whitespace-nowrap opacity-0 group-hover:opacity-100 
                         transition-opacity duration-200 pointer-events-none
                         shadow-lg backdrop-blur-sm border border-white/10">
           Share Location
-          <span className="absolute left-full top-1/2 -translate-y-1/2 
-                          border-4 border-transparent border-l-gray-900/95"></span>
+          <span className="absolute right-full top-1/2 -translate-y-1/2 
+                          border-4 border-transparent border-r-gray-900/95"></span>
         </span>
       </button>
+      </div>
     </div>
   );
 }
