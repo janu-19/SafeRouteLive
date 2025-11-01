@@ -4,7 +4,7 @@ import { io } from 'socket.io-client';
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN || '';
 
-export default function MapComponent({ routes = [], selectedRoute = null, accidents = [] }) {
+export default function MapComponent({ routes = [], selectedRoute = null, accidents = [], userLocation = null, onMapReady = null }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const routeLayersRef = useRef(new Map());
@@ -13,6 +13,9 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
   const heatLayerIdRef = useRef('heat-layer');
   const accidentsLayerRef = useRef('accidents-layer');
   const accidentsSourceRef = useRef('accidents-source');
+  const userMarkerRef = useRef(null);
+  const userPulseCircleRef = useRef(null);
+  const hasCenteredRef = useRef(false);
 
   useEffect(() => {
     if (mapInstanceRef.current) return;
@@ -21,12 +24,33 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
       container: mapRef.current,
       style: 'mapbox://styles/mapbox/dark-v11',
       center: [77.5946, 12.9716],
-      zoom: 12
+      zoom: 12,
+      // Disable Mapbox telemetry to prevent ERR_BLOCKED_BY_CLIENT errors
+      collectResourceTiming: false
     });
+
+    // Suppress Mapbox telemetry errors (harmless - just analytics being blocked by ad blockers)
+    const originalError = console.error;
+    const errorInterceptor = (...args) => {
+      const message = args[0]?.toString() || '';
+      // Ignore Mapbox telemetry/analytics errors that are blocked by ad blockers
+      if (message.includes('events.mapbox.com') || 
+          message.includes('ERR_BLOCKED_BY_CLIENT') ||
+          (typeof args[0] === 'object' && args[0]?.message?.includes('events.mapbox.com'))) {
+        return; // Silently ignore
+      }
+      originalError.apply(console, args);
+    };
+    console.error = errorInterceptor;
 
     map.addControl(new mapboxgl.NavigationControl(), 'top-right');
 
     map.on('load', () => {
+      console.log('🗺️ MapComponent: Map loaded event fired');
+      // If userLocation is already available, create marker now
+      if (userLocation) {
+        console.log('🗺️ MapComponent: userLocation available on map load, will create marker');
+      }
       // Placeholder heat source/layer
       if (!map.getSource(heatSourceIdRef.current)) {
         map.addSource(heatSourceIdRef.current, {
@@ -149,12 +173,283 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
 
     mapInstanceRef.current = map;
 
+    // Notify parent that map is ready
+    if (onMapReady) {
+      onMapReady(map);
+    }
+
     return () => {
+      // Restore original console.error
+      console.error = originalError;
+      
       socket?.close();
-      map.remove();
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+      }
       mapInstanceRef.current = null;
     };
   }, []);
+
+  // Handle user location updates
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    console.log('📍 MapComponent: userLocation effect triggered', { 
+      hasMap: !!map, 
+      hasUserLocation: !!userLocation,
+      userLocation: userLocation
+    });
+    
+    if (!map) {
+      console.warn('📍 MapComponent: No map instance yet');
+      return;
+    }
+    
+    if (!userLocation) {
+      console.log('📍 MapComponent: No userLocation yet');
+      // If marker exists but location is cleared, remove it
+      if (userMarkerRef.current) {
+        console.log('📍 MapComponent: Removing existing marker (userLocation cleared)');
+        userMarkerRef.current.remove();
+        userMarkerRef.current = null;
+        userPulseCircleRef.current = null;
+        hasCenteredRef.current = false;
+      }
+      return;
+    }
+
+    const { latitude, longitude } = userLocation;
+    if (!latitude || !longitude || isNaN(latitude) || isNaN(longitude)) {
+      console.error('📍 MapComponent: Invalid coordinates', { latitude, longitude });
+      return;
+    }
+    
+    const coordinates = [longitude, latitude];
+    console.log('📍 MapComponent: Processing user location', coordinates, 'from', userLocation);
+
+    // Wait for map to be fully loaded before creating marker
+    const createMarker = () => {
+      console.log('📍 MapComponent: Creating/updating user marker');
+      
+      // Always center map on first location
+      if (!hasCenteredRef.current) {
+        console.log('📍 MapComponent: Centering map to user location', coordinates);
+        console.log('📍 MapComponent: Current map center before flyTo:', map.getCenter());
+        
+        map.flyTo({
+          center: coordinates,
+          zoom: 15,
+          duration: 1500,
+          essential: true
+        });
+        hasCenteredRef.current = true;
+        
+        // Verify after a delay
+        setTimeout(() => {
+          const finalCenter = map.getCenter();
+          console.log('📍 MapComponent: Map center after flyTo:', finalCenter);
+          console.log('📍 MapComponent: Expected center:', coordinates);
+          
+          // Check if the map actually moved to the correct location
+          const distance = Math.sqrt(
+            Math.pow(finalCenter.lng - coordinates[0], 2) + 
+            Math.pow(finalCenter.lat - coordinates[1], 2)
+          );
+          console.log('📍 MapComponent: Distance from target:', distance);
+        }, 1600);
+      } else {
+        console.log('📍 MapComponent: Map already centered, skipping flyTo');
+      }
+
+      // Create or update user marker with pulsing animation
+      if (!userMarkerRef.current) {
+        console.log('📍 MapComponent: Creating new user marker');
+        // Create pulsing circle element
+        const pulseEl = document.createElement('div');
+        pulseEl.className = 'user-location-pulse';
+        pulseEl.style.cssText = `
+          width: 60px;
+          height: 60px;
+          border-radius: 50%;
+          background-color: rgba(59, 130, 246, 0.3);
+          border: 2px solid rgba(59, 130, 246, 0.5);
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        `;
+
+        // Create outer pulse circle
+        userPulseCircleRef.current = document.createElement('div');
+        userPulseCircleRef.current.className = 'user-location-pulse-outer';
+        userPulseCircleRef.current.style.cssText = `
+          width: 80px;
+          height: 80px;
+          border-radius: 50%;
+          background-color: rgba(59, 130, 246, 0.2);
+          border: 2px solid rgba(59, 130, 246, 0.3);
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          animation: pulse-outer 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        `;
+
+        // Create marker container (large enough for pulse circles)
+        const markerContainer = document.createElement('div');
+        markerContainer.style.cssText = `
+          position: relative;
+          width: 80px;
+          height: 80px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        `;
+        markerContainer.appendChild(userPulseCircleRef.current);
+        markerContainer.appendChild(pulseEl);
+
+        // Create inner user dot
+        const userDot = document.createElement('div');
+        userDot.style.cssText = `
+          width: 16px;
+          height: 16px;
+          border-radius: 50%;
+          background-color: #3b82f6;
+          border: 3px solid white;
+          box-shadow: 0 0 10px rgba(59, 130, 246, 0.6);
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          z-index: 10;
+        `;
+        markerContainer.appendChild(userDot);
+
+        // Add CSS animations if not already added
+        if (!document.getElementById('user-location-animations')) {
+          const style = document.createElement('style');
+          style.id = 'user-location-animations';
+          style.textContent = `
+            @keyframes pulse {
+              0%, 100% {
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1);
+              }
+              50% {
+                opacity: 0.5;
+                transform: translate(-50%, -50%) scale(1.2);
+              }
+            }
+            @keyframes pulse-outer {
+              0%, 100% {
+                opacity: 0.3;
+                transform: translate(-50%, -50%) scale(1);
+              }
+              50% {
+                opacity: 0.1;
+                transform: translate(-50%, -50%) scale(1.4);
+              }
+            }
+          `;
+          document.head.appendChild(style);
+        }
+
+        // Create Mapbox marker with explicit z-index and anchor
+        userMarkerRef.current = new mapboxgl.Marker({
+          element: markerContainer,
+          anchor: 'center',
+          offset: [0, 0]
+        })
+          .setLngLat(coordinates)
+          .addTo(map);
+
+        // Verify marker was added
+        if (!userMarkerRef.current.getElement()) {
+          console.error('📍 MapComponent: Marker element not found after creation!');
+        } else {
+          console.log('📍 MapComponent: Marker element created:', userMarkerRef.current.getElement());
+        }
+
+        // Verify marker position
+        const markerLngLat = userMarkerRef.current.getLngLat();
+        console.log('📍 MapComponent: Marker position set to:', markerLngLat);
+
+        // Add popup
+        const popup = new mapboxgl.Popup({ offset: 25, closeButton: false })
+          .setText('📍 You are here');
+        userMarkerRef.current.setPopup(popup);
+        
+        console.log('📍 MapComponent: ✅ User marker created successfully at', coordinates);
+        console.log('📍 MapComponent: Map center is:', map.getCenter());
+        console.log('📍 MapComponent: Map zoom is:', map.getZoom());
+      } else {
+        // Update existing marker position
+        console.log('📍 MapComponent: Updating user marker position');
+        userMarkerRef.current.setLngLat(coordinates);
+      }
+    };
+
+    // Try to create marker - handle both loaded and not-yet-loaded cases
+    const tryCreateMarker = () => {
+      try {
+        createMarker();
+      } catch (error) {
+        console.error('📍 MapComponent: Error creating marker, will retry when map loads', error);
+        // If error, wait for map load
+        const onLoad = () => {
+          console.log('📍 MapComponent: Map loaded after error, retrying marker creation');
+          try {
+            createMarker();
+          } catch (retryError) {
+            console.error('📍 MapComponent: Error retrying marker creation', retryError);
+          }
+        };
+        map.once('load', onLoad);
+        return () => {
+          map.off('load', onLoad);
+        };
+      }
+    };
+
+    // Always try to create marker - let createMarker handle timing issues
+    // Use a more aggressive approach: try immediately, then wait for load if needed
+    console.log('📍 MapComponent: Attempting to create marker immediately');
+    
+    // Try immediately first
+    tryCreateMarker();
+    
+    // Also set up listener for map load (in case it wasn't loaded yet)
+    const onLoad = () => {
+      console.log('📍 MapComponent: Map loaded event fired, attempting marker creation');
+      // Only create if we don't have a marker yet
+      if (!userMarkerRef.current) {
+        tryCreateMarker();
+      }
+    };
+    
+    // If map hasn't loaded yet, listen for load event
+    if (!map.loaded) {
+      console.log('📍 MapComponent: Map not loaded yet, waiting for load event...');
+      map.once('load', onLoad);
+    }
+    
+    // Fallback: try again after a delay regardless
+    const timeoutId = setTimeout(() => {
+      console.log('📍 MapComponent: Fallback timeout - checking marker status');
+      if (!userMarkerRef.current) {
+        console.log('📍 MapComponent: Marker still not created, retrying...');
+        tryCreateMarker();
+      } else {
+        console.log('📍 MapComponent: Marker already exists, skipping retry');
+      }
+    }, 2000);
+    
+    return () => {
+      map.off('load', onLoad);
+      clearTimeout(timeoutId);
+    };
+  }, [userLocation]);
+
 
   // Update routes when prop changes
   useEffect(() => {

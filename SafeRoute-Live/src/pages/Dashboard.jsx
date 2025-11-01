@@ -3,6 +3,8 @@ import { Chart } from 'chart.js/auto';
 import MapComponent from '../components/MapComponent.jsx';
 import { initializeSocket, getSocket } from '../utils/socket.js';
 import { getAccidents, getCrimeData } from '../utils/api.js';
+import { watchPosition, getCurrentPosition } from '../utils/geolocation.js';
+import { Navigation } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 
@@ -23,6 +25,13 @@ export default function Dashboard() {
   const [liveAlerts, setLiveAlerts] = useState([]);
   const alertsEndRef = useRef(null);
 
+  // User location state
+  const [userLocation, setUserLocation] = useState(null);
+  const [locationError, setLocationError] = useState(null);
+  const [isLocating, setIsLocating] = useState(false);
+  const mapInstanceRef = useRef(null);
+  const watchPositionCleanupRef = useRef(null);
+
   // Admin Panel state (Demo Magic Wand)
   const [lat, setLat] = useState('12.9716');
   const [lng, setLng] = useState('77.5946');
@@ -35,31 +44,121 @@ export default function Dashboard() {
   const trafficChartRef = useRef(null);
   const crowdChartRef = useRef(null);
 
-  // Get user's current location on component mount
+  // Watch user's location in real-time
   useEffect(() => {
-    // Check if the browser supports Geolocation
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          // Success! We got the user's location.
-          const { latitude, longitude } = position.coords;
-          console.log('✅ Got user location:', latitude, longitude);
-          
-          // Update the form fields
-          setLat(latitude.toFixed(6));
-          setLng(longitude.toFixed(6));
-        },
-        (error) => {
-          // Handle errors (e.g., user clicked "Block")
-          console.warn('⚠️ Could not get location, using default.', error.message);
-          // Keep default values (Bengaluru)
+    setIsLocating(true);
+    setLocationError(null);
+
+    const cleanup = watchPosition(
+      (location) => {
+        console.log('✅ User location updated:', location.latitude, location.longitude);
+        setUserLocation({
+          latitude: location.latitude,
+          longitude: location.longitude,
+          accuracy: location.accuracy,
+          heading: location.heading,
+          speed: location.speed,
+          timestamp: location.timestamp
+        });
+        
+        // Update the form fields for admin panel
+        setLat(location.latitude.toFixed(6));
+        setLng(location.longitude.toFixed(6));
+        
+        setIsLocating(false);
+        setLocationError(null);
+      },
+      (error) => {
+        console.error('❌ Location error:', error);
+        setIsLocating(false);
+        
+        let errorMessage = 'Unable to fetch your location.';
+        if (error.code === 1) {
+          errorMessage = 'Location access denied. Please enable location permissions in your browser.';
+        } else if (error.code === 2) {
+          errorMessage = 'Location unavailable. Please check your GPS settings.';
+        } else if (error.code === 3) {
+          errorMessage = 'Location request timed out. Please try again.';
         }
-      );
-    } else {
-      console.warn('⚠️ Geolocation is not supported by this browser.');
-      // Keep default values
+        
+        setLocationError(errorMessage);
+        setUserLocation(null);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 1000
+      }
+    );
+
+    watchPositionCleanupRef.current = cleanup;
+
+    return () => {
+      if (watchPositionCleanupRef.current) {
+        watchPositionCleanupRef.current();
+        watchPositionCleanupRef.current = null;
+      }
+    };
+  }, []);
+
+  // Handle "Locate Me" button click
+  const handleLocateMe = async () => {
+    setIsLocating(true);
+    setLocationError(null);
+
+    try {
+      const location = await getCurrentPosition({
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      });
+
+      setUserLocation({
+        latitude: location.latitude,
+        longitude: location.longitude,
+        accuracy: location.accuracy,
+        heading: location.heading,
+        speed: location.speed,
+        timestamp: location.timestamp
+      });
+
+      // Update form fields
+      setLat(location.latitude.toFixed(6));
+      setLng(location.longitude.toFixed(6));
+
+      // Center map on user location
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.flyTo({
+          center: [location.longitude, location.latitude],
+          zoom: 15,
+          duration: 1500,
+          essential: true
+        });
+      }
+
+      setIsLocating(false);
+      setLocationError(null);
+    } catch (error) {
+      console.error('❌ Error getting location:', error);
+      setIsLocating(false);
+      
+      let errorMessage = 'Unable to fetch your location.';
+      if (error.message.includes('denied')) {
+        errorMessage = 'Location access denied. Please enable location permissions.';
+      } else if (error.message.includes('unavailable')) {
+        errorMessage = 'Location unavailable. Please check your GPS settings.';
+      } else if (error.message.includes('timeout')) {
+        errorMessage = 'Location request timed out. Please try again.';
+      }
+      
+      setLocationError(errorMessage);
     }
-  }, []); // Empty array means this runs only once on mount
+  };
+
+  // Handle map ready callback
+  const handleMapReady = (map) => {
+    mapInstanceRef.current = map;
+  };
 
   // Initialize Socket.IO for live updates
   useEffect(() => {
@@ -351,6 +450,8 @@ export default function Dashboard() {
           <MapComponent 
             routes={[]} 
             accidents={safetyScoreData.map(p => ({ lat: p.lat, lng: p.lng, severity: p.score < 40 ? 'high' : p.score < 60 ? 'medium' : 'low' }))}
+            userLocation={userLocation}
+            onMapReady={handleMapReady}
           />
         </div>
         {/* Map overlay info */}
@@ -358,7 +459,45 @@ export default function Dashboard() {
           <div className="text-xs opacity-70">🛰️ Dynamic Safety Score Map</div>
           <div className="text-sm font-semibold">Last updated: {lastUpdate.toLocaleTimeString()}</div>
           <div className="text-xs opacity-70 mt-1">Auto-updating every 30s</div>
+          {locationError && (
+            <div className="text-xs text-red-400 mt-2 max-w-xs">
+              ⚠️ {locationError}
+            </div>
+          )}
         </div>
+        {/* Locate Me Button */}
+        <button
+          onClick={handleLocateMe}
+          disabled={isLocating}
+          className="absolute bottom-4 right-4 z-10 group relative w-14 h-14 rounded-full flex items-center justify-center 
+                     bg-gradient-to-br from-blue-500/90 to-indigo-600/90 
+                     hover:from-blue-600 hover:to-indigo-700 
+                     active:scale-95 
+                     shadow-lg shadow-blue-500/30 
+                     hover:shadow-xl hover:shadow-blue-500/50 
+                     border-2 border-blue-400/50 
+                     backdrop-blur-sm 
+                     transition-all duration-200 
+                     disabled:opacity-50 disabled:cursor-not-allowed
+                     hover:scale-105"
+          aria-label="Locate Me"
+          title="Locate Me"
+        >
+          <Navigation 
+            size={24} 
+            className={`text-white drop-shadow-sm ${isLocating ? 'animate-spin' : ''}`}
+          />
+          {/* Tooltip */}
+          <span className="absolute right-full mr-3 px-3 py-1.5 rounded-lg 
+                          bg-gray-900/95 text-white text-xs font-medium 
+                          whitespace-nowrap opacity-0 group-hover:opacity-100 
+                          transition-opacity duration-200 pointer-events-none
+                          shadow-lg backdrop-blur-sm border border-white/10">
+            {isLocating ? 'Locating...' : 'Locate Me'}
+            <span className="absolute left-full top-1/2 -translate-y-1/2 
+                            border-4 border-transparent border-l-gray-900/95"></span>
+          </span>
+        </button>
       </div>
 
       {/* Side Panel */}

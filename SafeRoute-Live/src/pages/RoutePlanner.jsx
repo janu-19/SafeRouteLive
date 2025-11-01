@@ -5,10 +5,21 @@ import RouteCard from '../components/RouteCard.jsx';
 import FloatingButtons from '../components/FloatingButtons.jsx';
 import FeedbackModal from '../components/FeedbackModal.jsx';
 import AISuggestionModal from '../components/AISuggestionModal.jsx';
-import { getSafeRoutes, getAccidents, getAISafetySuggestion, getAddressSuggestions } from '../utils/api.js';
+import { getSafeRoutes, getAccidents, getAISafetySuggestion, getAddressSuggestions, reverseGeocode } from '../utils/api.js';
+import { watchPosition, getCurrentPosition, isGeolocationSupported } from '../utils/geolocation.js';
+import { MapPin, AlertCircle } from 'lucide-react';
 
 export default function RoutePlanner() {
-  const [source, setSource] = useState('MG Road, Bengaluru');
+  // User location state
+  const [userLocation, setUserLocation] = useState(null);
+  const [locationError, setLocationError] = useState(null);
+  const [isLocating, setIsLocating] = useState(false);
+  const [showPermissionPrompt, setShowPermissionPrompt] = useState(false);
+  const [permissionDenied, setPermissionDenied] = useState(false);
+  const watchPositionCleanupRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  
+  const [source, setSource] = useState('');
   const [dest, setDest] = useState('Indiranagar, Bengaluru');
   const [pref, setPref] = useState('Well-lit');
   const [routes, setRoutes] = useState([]);
@@ -236,6 +247,142 @@ export default function RoutePlanner() {
     };
   }, []);
 
+  // Check geolocation support on mount
+  useEffect(() => {
+    if (!isGeolocationSupported()) {
+      setLocationError('Geolocation is not supported by this browser.');
+      setPermissionDenied(true);
+      if (!source) {
+        setSource('MG Road, Bengaluru');
+        sourceRef.current = 'MG Road, Bengaluru';
+      }
+    }
+  }, []);
+
+  // Request location permission and start watching
+  const requestLocationAccess = async () => {
+    if (!isGeolocationSupported()) {
+      setLocationError('Geolocation is not supported by this browser.');
+      return;
+    }
+
+    setIsLocating(true);
+    setLocationError(null);
+    setShowPermissionPrompt(false);
+    setPermissionDenied(false);
+
+    try {
+      // First try to get current position (this will trigger permission prompt)
+      const location = await getCurrentPosition({
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0
+      });
+
+      console.log('✅ Got initial location:', location.latitude, location.longitude);
+      
+      setUserLocation({
+        latitude: location.latitude,
+        longitude: location.longitude,
+        accuracy: location.accuracy,
+        heading: location.heading,
+        speed: location.speed,
+        timestamp: location.timestamp
+      });
+
+      // Set source to coordinates initially, then try to get location name
+      const coordsString = `${location.latitude},${location.longitude}`;
+      setSource(coordsString);
+      sourceRef.current = coordsString;
+      
+      // Reverse geocode to get location name
+      reverseGeocode(location.longitude, location.latitude)
+        .then(locationName => {
+          if (locationName) {
+            console.log('📍 Location name:', locationName);
+            setSource(locationName);
+            sourceRef.current = locationName;
+          }
+        })
+        .catch(err => {
+          console.error('Error reverse geocoding:', err);
+          // Keep coordinates as fallback
+        });
+
+      setIsLocating(false);
+      setLocationError(null);
+      setPermissionDenied(false);
+
+      // Now start watching position for updates
+      const cleanup = watchPosition(
+        (updatedLocation) => {
+          console.log('✅ User location updated:', updatedLocation.latitude, updatedLocation.longitude);
+          setUserLocation({
+            latitude: updatedLocation.latitude,
+            longitude: updatedLocation.longitude,
+            accuracy: updatedLocation.accuracy,
+            heading: updatedLocation.heading,
+            speed: updatedLocation.speed,
+            timestamp: updatedLocation.timestamp
+          });
+          
+          // Update source if it was auto-set from location
+          const currentSource = sourceRef.current;
+          if (currentSource && currentSource.includes(',')) {
+            const updatedCoordsString = `${updatedLocation.latitude},${updatedLocation.longitude}`;
+            setSource(updatedCoordsString);
+            sourceRef.current = updatedCoordsString;
+          }
+        },
+        (error) => {
+          console.error('❌ Location watch error:', error);
+          if (error.code === 1) {
+            setPermissionDenied(true);
+            setLocationError('Location access denied. Please allow location access in your browser settings.');
+          }
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 1000
+        }
+      );
+
+      watchPositionCleanupRef.current = cleanup;
+    } catch (error) {
+      console.error('❌ Error getting location:', error);
+      setIsLocating(false);
+      
+      let errorMessage = 'Unable to fetch your location.';
+      if (error.message.includes('denied') || error.message.includes('PERMISSION_DENIED')) {
+        errorMessage = 'Location access denied. Please allow location access in your browser settings and try again.';
+        setPermissionDenied(true);
+        setShowPermissionPrompt(true);
+      } else if (error.message.includes('unavailable') || error.message.includes('POSITION_UNAVAILABLE')) {
+        errorMessage = 'Location unavailable. Please check your GPS settings.';
+      } else if (error.message.includes('timeout') || error.message.includes('TIMEOUT')) {
+        errorMessage = 'Location request timed out. Please try again.';
+        setShowPermissionPrompt(true);
+      } else {
+        errorMessage = error.message || 'Unable to fetch your location.';
+      }
+      
+      setLocationError(errorMessage);
+      setUserLocation(null);
+      
+      // Set default source if location failed
+      if (!source) {
+        setSource('MG Road, Bengaluru');
+        sourceRef.current = 'MG Road, Bengaluru';
+      }
+    }
+  };
+
+  // Handle map ready callback
+  const handleMapReady = (map) => {
+    mapInstanceRef.current = map;
+  };
+
   // Initial fetch
   useEffect(() => {
     fetchAccidents();
@@ -348,31 +495,22 @@ export default function RoutePlanner() {
     setShowFeedbackModal(true);
   };
 
-  // Get user's current location and set it as source
-  const handleFindMyLocation = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          // Success! We got the user's location.
-          const { latitude, longitude } = position.coords;
-          console.log('✅ Got user location:', latitude, longitude);
-          
-          // Set the "Source" input to the coordinates as a string.
-          // Our backend will be smart enough to understand this.
-          const coordsString = `${latitude},${longitude}`;
-          setSource(coordsString);
-          sourceRef.current = coordsString;
-        },
-        (error) => {
-          // Handle errors (e.g., user clicked "Block")
-          console.warn('⚠️ Could not get location:', error.message);
-          alert('Could not get your location. Please type it manually.');
-        }
-      );
-    } else {
-      alert('Geolocation is not supported by this browser.');
-    }
+  // Get user's current location and set it as source (manual refresh)
+  const handleFindMyLocation = async () => {
+    await requestLocationAccess();
   };
+
+  // Initial location request - show prompt instead of auto-requesting
+  useEffect(() => {
+    // Show permission prompt after a short delay
+    const timer = setTimeout(() => {
+      if (!userLocation && !permissionDenied && isGeolocationSupported()) {
+        setShowPermissionPrompt(true);
+      }
+    }, 500);
+    
+    return () => clearTimeout(timer);
+  }, []); // Only run once on mount
 
   // Simulate route completion after estimated time (optional - can be triggered manually)
   useEffect(() => {
@@ -389,6 +527,52 @@ export default function RoutePlanner() {
 
   return (
     <div className="h-full w-full grid grid-cols-1 lg:grid-cols-[380px_1fr]">
+      {/* Location Permission Prompt Modal */}
+      {showPermissionPrompt && !userLocation && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="glass rounded-2xl p-6 max-w-md space-y-4 border border-white/20 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <MapPin className="text-blue-400" size={32} />
+              <h3 className="text-xl font-bold">Enable Location Access</h3>
+            </div>
+            <p className="text-slate-300">
+              To use your live location for route planning, please allow location access when prompted by your browser.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={requestLocationAccess}
+                disabled={isLocating}
+                className="flex-1 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 py-2.5 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold transition-all flex items-center justify-center gap-2"
+              >
+                {isLocating ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                    <span>Requesting...</span>
+                  </>
+                ) : (
+                  <>
+                    <MapPin size={18} />
+                    <span>Allow Location</span>
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setShowPermissionPrompt(false);
+                  if (!source) {
+                    setSource('MG Road, Bengaluru');
+                    sourceRef.current = 'MG Road, Bengaluru';
+                  }
+                }}
+                className="px-4 rounded-lg bg-white/10 hover:bg-white/20 py-2.5 text-white font-medium transition-all"
+              >
+                Skip
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="p-4 space-y-3 order-2 lg:order-1 overflow-y-auto">
         <div className="glass rounded-2xl p-4 space-y-3">
           <div className="relative">
@@ -412,10 +596,21 @@ export default function RoutePlanner() {
                 />
                 <button
                   onClick={handleFindMyLocation}
-                  className="mt-1 px-3 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:brightness-110 text-white font-semibold text-sm whitespace-nowrap"
+                  disabled={isLocating}
+                  className="mt-1 px-3 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm whitespace-nowrap transition-all flex items-center gap-1.5"
                   title="Get my current location"
                 >
-                  📍 Find Me
+                  {isLocating ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+                      <span>Locating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <MapPin size={16} />
+                      <span>Find Me</span>
+                    </>
+                  )}
                 </button>
               </div>
               {showSourceSuggestions && sourceSuggestions.length > 0 && (
@@ -512,6 +707,28 @@ export default function RoutePlanner() {
               </button>
             </div>
           </div>
+          {locationError && (
+            <div className={`text-sm mt-2 p-3 rounded-lg ${
+              permissionDenied 
+                ? 'bg-red-500/20 border border-red-500/50 text-red-400' 
+                : 'bg-yellow-500/20 border border-yellow-500/50 text-yellow-400'
+            }`}>
+              <div className="flex items-start gap-2">
+                <AlertCircle size={18} className="mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <div className="font-medium">{locationError}</div>
+                  {permissionDenied && (
+                    <button
+                      onClick={requestLocationAccess}
+                      className="mt-2 text-sm underline hover:no-underline"
+                    >
+                      Click here to request location access again
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
           {error && (
             <div className="text-red-400 text-sm mt-2">{error}</div>
           )}
@@ -573,9 +790,11 @@ export default function RoutePlanner() {
             routes={routes} 
             selectedRoute={selected}
             accidents={accidents}
+            userLocation={userLocation}
+            onMapReady={handleMapReady}
           />
         </div>
-        <FloatingButtons onRecalculate={handleRecalculate} />
+        <FloatingButtons onRecalculate={handleRecalculate} location={userLocation} />
       </div>
       
       {/* Feedback Modal */}

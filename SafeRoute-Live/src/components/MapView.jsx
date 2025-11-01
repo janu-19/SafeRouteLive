@@ -38,8 +38,29 @@ export default function MapView({ center = [77.5946, 12.9716], zoom = 13, onMapL
       style: 'mapbox://styles/mapbox/dark-v11',
       center: center,
       zoom: zoom,
-      attributionControl: true
+      attributionControl: true,
+      // Disable Mapbox telemetry to prevent ERR_BLOCKED_BY_CLIENT errors
+      collectResourceTiming: false
     });
+
+    // Suppress Mapbox telemetry errors (harmless - just analytics being blocked by ad blockers)
+    const originalError = console.error;
+    const errorInterceptor = (...args) => {
+      const message = args[0]?.toString() || '';
+      // Ignore Mapbox telemetry/analytics errors that are blocked by ad blockers
+      if (message.includes('events.mapbox.com') || 
+          message.includes('ERR_BLOCKED_BY_CLIENT') ||
+          (typeof args[0] === 'object' && args[0]?.message?.includes('events.mapbox.com'))) {
+        return; // Silently ignore
+      }
+      originalError.apply(console, args);
+    };
+    console.error = errorInterceptor;
+
+    // Restore original error handler on cleanup
+    const restoreError = () => {
+      console.error = originalError;
+    };
 
     // Add navigation controls
     map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
@@ -68,6 +89,9 @@ export default function MapView({ center = [77.5946, 12.9716], zoom = 13, onMapL
 
     // Cleanup function
     return () => {
+      // Restore original console.error
+      console.error = originalError;
+      
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
