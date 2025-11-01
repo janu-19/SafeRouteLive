@@ -89,4 +89,32 @@ export async function getAISafetySuggestion(source, destination, routes) {
   return res.json();
 }
 
+export async function getAddressSuggestions(query) {
+  if (!query || query.length < 2) return [];
+  
+  const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
+  if (!MAPBOX_TOKEN) return [];
+  
+  try {
+    const params = new URLSearchParams({
+      access_token: MAPBOX_TOKEN,
+      types: 'place,locality,neighborhood,address',
+      autocomplete: 'true',
+      limit: '5'
+    });
+    
+    const res = await fetch(
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?${params}`
+    );
+    
+    if (!res.ok) return [];
+    
+    const data = await res.json();
+    return data.features || [];
+  } catch (err) {
+    console.error('Error fetching address suggestions:', err);
+    return [];
+  }
+}
+
 
