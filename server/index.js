@@ -15,15 +15,64 @@ const app = express();
 const httpServer = createServer(app);
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+// Define allowed origins (main app + admin dashboard)
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:5173',
+  'http://localhost:5177' // Admin Dashboard
+];
+
+// Configure CORS to allow multiple origins
+// For development, allow all localhost ports to avoid CORS issues
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Allow all localhost ports for development
+    if (origin.startsWith('http://localhost:') || origin.startsWith('https://localhost:')) {
+      return callback(null, true);
+    }
+    
+    // Check if origin is in allowed list (for production)
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      callback(new Error(msg), false);
+    }
+  },
+  credentials: true
+}));
+
 app.use(express.json());
 
-// Initialize Socket.IO
+// Initialize Socket.IO with multiple allowed origins
+// For development, allow all localhost ports to avoid CORS issues
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) {
+        return callback(null, true);
+      }
+      
+      // Allow all localhost ports for development
+      if (origin.startsWith('http://localhost:') || origin.startsWith('https://localhost:')) {
+        console.log(`✅ CORS allowed origin: ${origin}`);
+        return callback(null, true);
+      }
+      
+      // Check if origin is in allowed list (for production)
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.log(`❌ CORS blocked origin: ${origin}. Allowed:`, allowedOrigins);
+        callback(new Error('CORS: Origin not allowed'), false);
+      }
+    },
     methods: ['GET', 'POST'],
-    credentials: true
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization']
   }
 });
 
@@ -585,6 +634,18 @@ app.get('/api/getLighting', async (req, res) => {
 });
 
 /**
+ * Helper function to check if a string is "lat,lng" coordinates
+ * @param {string} text - Input string to check
+ * @returns {boolean} True if text is coordinate format
+ */
+function isCoordinates(text) {
+  if (!text) return false;
+  const parts = text.split(',');
+  // Check if it's two parts, and both are valid numbers
+  return parts.length === 2 && !isNaN(parseFloat(parts[0])) && !isNaN(parseFloat(parts[1]));
+}
+
+/**
  * Geocode address to coordinates using Mapbox
  * @param {string} address - Address string
  * @returns {Promise<Array>} [lng, lat] coordinates
@@ -688,24 +749,42 @@ app.get('/api/getSafeRoutes', async (req, res) => {
       return res.status(400).json({ error: 'Source and destination are required' });
     }
 
-    // Geocode source and destination
-    let sourceCoords, destCoords;
-    try {
-      sourceCoords = await geocodeAddress(source);
-    } catch (error) {
-      return res.status(400).json({ 
-        error: `Could not find location for source: "${source}". Please be more specific (e.g., "Hyderabad, Telangana" or include a landmark).`,
-        details: error.message
-      });
+    // Handle source: check if it's coordinates or text
+    let sourceCoords;
+    if (isCoordinates(source)) {
+      console.log('✅ Source is coordinates, using directly.');
+      const parts = source.split(',');
+      // Note: Geolocation gives [lat, lng]. Mapbox needs [lng, lat].
+      sourceCoords = [parseFloat(parts[1]), parseFloat(parts[0])]; // [lng, lat]
+    } else {
+      console.log('📍 Source is text, geocoding...');
+      try {
+        sourceCoords = await geocodeAddress(source);
+      } catch (error) {
+        return res.status(400).json({ 
+          error: `Could not find location for source: "${source}". Please be more specific (e.g., "Hyderabad, Telangana" or include a landmark).`,
+          details: error.message
+        });
+      }
     }
-    
-    try {
-      destCoords = await geocodeAddress(destination);
-    } catch (error) {
-      return res.status(400).json({ 
-        error: `Could not find location for destination: "${destination}". Please be more specific (e.g., include city name or landmark).`,
-        details: error.message
-      });
+
+    // Handle destination: check if it's coordinates or text
+    let destCoords;
+    if (isCoordinates(destination)) {
+      console.log('✅ Destination is coordinates, using directly.');
+      const parts = destination.split(',');
+      // Note: Geolocation gives [lat, lng]. Mapbox needs [lng, lat].
+      destCoords = [parseFloat(parts[1]), parseFloat(parts[0])]; // [lng, lat]
+    } else {
+      console.log('📍 Destination is text, geocoding...');
+      try {
+        destCoords = await geocodeAddress(destination);
+      } catch (error) {
+        return res.status(400).json({ 
+          error: `Could not find location for destination: "${destination}". Please be more specific (e.g., include city name or landmark).`,
+          details: error.message
+        });
+      }
     }
 
     // Get routes from Mapbox Directions API
@@ -963,9 +1042,64 @@ app.post('/api/sos', (req, res) => {
   });
 });
 
+// Admin Panel: Trigger Live Safety Event (Demo Magic Wand)
+app.post('/api/trigger-event', (req, res) => {
+  try {
+    const { lat, lng, severity = -5, eventType = 'accident' } = req.body;
+    
+    if (!lat || !lng) {
+      return res.status(400).json({ 
+        error: 'Latitude and longitude are required',
+        success: false
+      });
+    }
+
+    console.log(`🎯 Demo Event Triggered: ${eventType} at [${lat}, ${lng}] with severity ${severity}`);
+    
+    // Create safety event data
+    const safetyEvent = {
+      id: `event-${Date.now()}`,
+      lat: parseFloat(lat),
+      lng: parseFloat(lng),
+      severity: parseFloat(severity), // -5 to -10 makes it dangerous
+      eventType, // 'accident', 'protest', 'crime', etc.
+      timestamp: Date.now(),
+      impact: Math.abs(parseFloat(severity)) * 1000 // Impact radius in meters
+    };
+
+    // Broadcast to ALL connected clients via Socket.IO
+    // This is the "wow" moment - all users see the heatmap update instantly
+    io.emit('safety-update', {
+      type: 'live-event',
+      event: safetyEvent,
+      message: `Live safety event detected: ${eventType} at location`,
+      timestamp: Date.now()
+    });
+
+    // Also update the accidents data temporarily
+    // This ensures the event appears in accident queries too
+    console.log(`📡 Broadcasting safety-update to all connected clients`);
+
+    res.json({
+      success: true,
+      message: `Safety event triggered and broadcasted to all users`,
+      event: safetyEvent,
+      broadcasted: true
+    });
+  } catch (error) {
+    console.error('Error triggering event:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to trigger event',
+      details: error.message
+    });
+  }
+});
+
 httpServer.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📡 API endpoints available at /api/*`);
   console.log(`🔌 Socket.IO server ready for connections`);
+  console.log(`✨ Admin Panel (Demo Magic Wand) available at http://localhost:5173/dashboard`);
 });
 
