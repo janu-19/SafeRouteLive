@@ -78,7 +78,11 @@ export default function RoutePlanner() {
       }
     } catch (err) {
       console.error('Error fetching safe routes:', err);
-      setError('Failed to fetch safe routes. Please check your connection.');
+      if (err.message?.includes('Failed to fetch') || err.message?.includes('Connection refused')) {
+        setError('Backend server is not running. Please start the server on port 3001.');
+      } else {
+        setError('Failed to fetch safe routes. Please check your connection.');
+      }
     } finally {
       setLoading(false);
     }
@@ -89,7 +93,12 @@ export default function RoutePlanner() {
       const response = await getAccidents();
       setAccidents(response.data || []);
     } catch (err) {
-      console.error('Error fetching accidents:', err);
+      // Only log if it's not a connection error (server might not be running)
+      if (!err.message?.includes('Failed to fetch') && !err.message?.includes('Connection refused')) {
+        console.error('Error fetching accidents:', err);
+      }
+      // Set empty array as fallback
+      setAccidents([]);
     }
   };
 
