@@ -1,19 +1,12 @@
-import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import mongoose from 'mongoose';
 
 // Node.js 18+ has native fetch support
 // If using Node.js < 18, uncomment: import fetch from 'node-fetch';
-
-// Import share routes and socket handlers
-import shareRoutes from './src/routes/shareRoutes.js';
-import { initializeShareSocketHandlers, setIo as setShareSocketIo } from './src/sockets/liveTrackingSocket.js';
-import { setIo as setShareControllerIo } from './src/controllers/shareController.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -22,91 +15,17 @@ const app = express();
 const httpServer = createServer(app);
 const PORT = process.env.PORT || 3001;
 
-// MongoDB connection
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/saferoute';
-
-console.log('🔍 MongoDB URI from env:', process.env.MONGODB_URI ? 'Found' : 'NOT FOUND');
-console.log('🔍 Will connect to:', MONGODB_URI.substring(0, 50) + '...' || MONGODB_URI);
-
-mongoose.connect(MONGODB_URI)
-  .then(() => {
-    console.log('✅ Connected to MongoDB:', MONGODB_URI.substring(0, 50) + '...' || MONGODB_URI);
-  })
-  .catch((error) => {
-    console.error('❌ MongoDB connection error:', error.message);
-    console.warn('⚠️  Continuing without MongoDB. Some features may not work.');
-  });
-
-// Define allowed origins (main app + admin dashboard)
-const allowedOrigins = [
-  process.env.FRONTEND_URL || 'http://localhost:5173',
-  'http://localhost:5177' // Admin Dashboard
-];
-
-// Configure CORS to allow multiple origins
-// For development, allow all localhost ports to avoid CORS issues
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    // Allow all localhost ports for development
-    if (origin.startsWith('http://localhost:') || origin.startsWith('https://localhost:')) {
-      return callback(null, true);
-    }
-    
-    // Check if origin is in allowed list (for production)
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      callback(new Error(msg), false);
-    }
-  },
-  credentials: true
-}));
+app.use(cors());
 app.use(express.json());
 
-// Initialize Socket.IO with multiple allowed origins
-// For development, allow all localhost ports to avoid CORS issues
+// Initialize Socket.IO
 const io = new Server(httpServer, {
   cors: {
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps or curl requests)
-      if (!origin) {
-        return callback(null, true);
-      }
-      
-      // Allow all localhost ports for development
-      if (origin.startsWith('http://localhost:') || origin.startsWith('https://localhost:')) {
-        console.log(`✅ CORS allowed origin: ${origin}`);
-        return callback(null, true);
-      }
-      
-      // Check if origin is in allowed list (for production)
-      if (allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        console.log(`❌ CORS blocked origin: ${origin}. Allowed:`, allowedOrigins);
-        callback(new Error('CORS: Origin not allowed'), false);
-      }
-    },
+    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
     methods: ['GET', 'POST'],
-    credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization']
+    credentials: true
   }
 });
-
-// Pass io instance to share controller and socket handlers
-setShareControllerIo(io);
-setShareSocketIo(io);
-
-// Register share routes
-app.use('/api/share', shareRoutes);
-
-// Initialize share socket handlers (with authentication)
-// This replaces the default io.on('connection') for share functionality
-initializeShareSocketHandlers(io);
 
 // Room management (in-memory storage)
 const rooms = new Map();
@@ -666,44 +585,115 @@ app.get('/api/getLighting', async (req, res) => {
 });
 
 /**
- * Helper function to check if a string is "lat,lng" coordinates
- * @param {string} text - Input string to check
- * @returns {boolean} True if text is coordinate format
- */
-function isCoordinates(text) {
-  if (!text) return false;
-  const parts = text.split(',');
-  // Check if it's two parts, and both are valid numbers
-  return parts.length === 2 && !isNaN(parseFloat(parts[0])) && !isNaN(parseFloat(parts[1]));
-}
-
-/**
- * Geocode address to coordinates using Mapbox
+ * Geocode address to coordinates using Mapbox with multiple fallback strategies
  * @param {string} address - Address string
  * @returns {Promise<Array>} [lng, lat] coordinates
  */
 async function geocodeAddress(address) {
-  try {
-    const encodedAddress = encodeURIComponent(address);
-    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodedAddress}.json?access_token=${MAPBOX_ACCESS_TOKEN}&limit=1`;
-    
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Mapbox Geocoding error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    if (data.features && data.features.length > 0) {
-      const coords = data.features[0].center; // [lng, lat]
-      console.log(`✅ Geocoded "${address}" to [${coords[0]}, ${coords[1]}]`);
-      return coords;
-    }
-    
-    throw new Error(`No location found for: ${address}`);
-  } catch (error) {
-    console.error(`❌ Error geocoding address "${address}":`, error.message);
-    throw error; // Don't fallback - let the caller handle the error
+  if (!address || address.trim().length === 0) {
+    throw new Error('Address is required');
   }
+
+  // Clean and prepare address variants
+  const cleanAddress = address.trim();
+  
+  // Extract potential components (for India addresses)
+  const addressParts = cleanAddress.split(',').map(part => part.trim()).filter(part => part.length > 0);
+  
+  // Build progressive fallback addresses
+  const addressVariants = [];
+  
+  // 1. Try original address
+  addressVariants.push(cleanAddress);
+  
+  // 2. Try without postal code (if present)
+  const withoutPostal = addressParts.filter(part => !/^\d{6}$/.test(part)).join(', ');
+  if (withoutPostal !== cleanAddress) {
+    addressVariants.push(withoutPostal);
+  }
+  
+  // 3. Try with key location parts (city, district, state, country)
+  // For format like "N10, 522240, Kuragallu, Mangalagiri, Guntur, Andhra Pradesh, India"
+  // Extract: Kuragallu, Mangalagiri, Guntur, Andhra Pradesh
+  const locationParts = addressParts.filter(part => 
+    !part.match(/^N\d+$|^\d{6}$|^India$/i)
+  );
+  if (locationParts.length > 0) {
+    // Try with all location parts
+    addressVariants.push(locationParts.join(', '));
+    
+    // Try with city/district and state
+    if (locationParts.length >= 2) {
+      addressVariants.push(`${locationParts[locationParts.length - 2]}, ${locationParts[locationParts.length - 1]}`);
+    }
+    
+    // Try with just the main city/district
+    if (locationParts.length >= 1) {
+      addressVariants.push(locationParts[locationParts.length - 2] || locationParts[0]);
+    }
+  }
+  
+  // Remove duplicates
+  const uniqueVariants = [...new Set(addressVariants)];
+  
+  // Try each variant
+  for (const variant of uniqueVariants) {
+    try {
+      const encodedAddress = encodeURIComponent(variant);
+      
+      // Try with India country code for better results
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodedAddress}.json?access_token=${MAPBOX_ACCESS_TOKEN}&country=IN&limit=5`;
+      
+      const response = await fetch(url);
+      if (!response.ok) {
+        continue; // Try next variant
+      }
+
+      const data = await response.json();
+      if (data.features && data.features.length > 0) {
+        // Prefer results in India
+        let bestMatch = data.features.find(f => 
+          f.context && f.context.some(ctx => ctx.id && ctx.id.startsWith('country'))
+        ) || data.features[0];
+        
+        // If we can't find India match, use first result
+        if (!bestMatch || !bestMatch.context || 
+            !bestMatch.context.some(ctx => ctx.id && ctx.id.startsWith('country'))) {
+          bestMatch = data.features[0];
+        }
+        
+        const coords = bestMatch.center; // [lng, lat]
+        console.log(`✅ Geocoded "${variant}" to [${coords[0]}, ${coords[1]}]`);
+        return coords;
+      }
+    } catch (error) {
+      console.log(`⚠️ Failed to geocode variant "${variant}":`, error.message);
+      continue; // Try next variant
+    }
+  }
+  
+  // If all variants failed, try one more time with just the city/state
+  const lastResort = addressParts.slice(-3).join(', ');
+  if (lastResort !== cleanAddress) {
+    try {
+      const encodedAddress = encodeURIComponent(lastResort);
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodedAddress}.json?access_token=${MAPBOX_ACCESS_TOKEN}&country=IN&limit=3`;
+      
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.features && data.features.length > 0) {
+          const coords = data.features[0].center;
+          console.log(`✅ Geocoded fallback "${lastResort}" to [${coords[0]}, ${coords[1]}]`);
+          return coords;
+        }
+      }
+    } catch (error) {
+      console.log(`⚠️ Fallback geocoding failed:`, error.message);
+    }
+  }
+  
+  throw new Error(`No location found for: ${address}`);
 }
 
 /**
@@ -781,42 +771,24 @@ app.get('/api/getSafeRoutes', async (req, res) => {
       return res.status(400).json({ error: 'Source and destination are required' });
     }
 
-    // Handle source: check if it's coordinates or text
-    let sourceCoords;
-    if (isCoordinates(source)) {
-      console.log('✅ Source is coordinates, using directly.');
-      const parts = source.split(',');
-      // Note: Geolocation gives [lat, lng]. Mapbox needs [lng, lat].
-      sourceCoords = [parseFloat(parts[1]), parseFloat(parts[0])]; // [lng, lat]
-    } else {
-      console.log('📍 Source is text, geocoding...');
-      try {
-        sourceCoords = await geocodeAddress(source);
-      } catch (error) {
-        return res.status(400).json({ 
-          error: `Could not find location for source: "${source}". Please be more specific (e.g., "Hyderabad, Telangana" or include a landmark).`,
-          details: error.message
-        });
-      }
+    // Geocode source and destination
+    let sourceCoords, destCoords;
+    try {
+      sourceCoords = await geocodeAddress(source);
+    } catch (error) {
+      return res.status(400).json({ 
+        error: `Could not find location for source: "${source}". Please be more specific (e.g., "Hyderabad, Telangana" or include a landmark).`,
+        details: error.message
+      });
     }
-
-    // Handle destination: check if it's coordinates or text
-    let destCoords;
-    if (isCoordinates(destination)) {
-      console.log('✅ Destination is coordinates, using directly.');
-      const parts = destination.split(',');
-      // Note: Geolocation gives [lat, lng]. Mapbox needs [lng, lat].
-      destCoords = [parseFloat(parts[1]), parseFloat(parts[0])]; // [lng, lat]
-    } else {
-      console.log('📍 Destination is text, geocoding...');
-      try {
-        destCoords = await geocodeAddress(destination);
-      } catch (error) {
-        return res.status(400).json({ 
-          error: `Could not find location for destination: "${destination}". Please be more specific (e.g., include city name or landmark).`,
-          details: error.message
-        });
-      }
+    
+    try {
+      destCoords = await geocodeAddress(destination);
+    } catch (error) {
+      return res.status(400).json({ 
+        error: `Could not find location for destination: "${destination}". Please be more specific (e.g., include city name or landmark).`,
+        details: error.message
+      });
     }
 
     // Get routes from Mapbox Directions API
@@ -1074,64 +1046,9 @@ app.post('/api/sos', (req, res) => {
   });
 });
 
-// Admin Panel: Trigger Live Safety Event (Demo Magic Wand)
-app.post('/api/trigger-event', (req, res) => {
-  try {
-    const { lat, lng, severity = -5, eventType = 'accident' } = req.body;
-    
-    if (!lat || !lng) {
-      return res.status(400).json({ 
-        error: 'Latitude and longitude are required',
-        success: false
-      });
-    }
-
-    console.log(`🎯 Demo Event Triggered: ${eventType} at [${lat}, ${lng}] with severity ${severity}`);
-    
-    // Create safety event data
-    const safetyEvent = {
-      id: `event-${Date.now()}`,
-      lat: parseFloat(lat),
-      lng: parseFloat(lng),
-      severity: parseFloat(severity), // -5 to -10 makes it dangerous
-      eventType, // 'accident', 'protest', 'crime', etc.
-      timestamp: Date.now(),
-      impact: Math.abs(parseFloat(severity)) * 1000 // Impact radius in meters
-    };
-
-    // Broadcast to ALL connected clients via Socket.IO
-    // This is the "wow" moment - all users see the heatmap update instantly
-    io.emit('safety-update', {
-      type: 'live-event',
-      event: safetyEvent,
-      message: `Live safety event detected: ${eventType} at location`,
-      timestamp: Date.now()
-    });
-
-    // Also update the accidents data temporarily
-    // This ensures the event appears in accident queries too
-    console.log(`📡 Broadcasting safety-update to all connected clients`);
-
-    res.json({
-      success: true,
-      message: `Safety event triggered and broadcasted to all users`,
-      event: safetyEvent,
-      broadcasted: true
-    });
-  } catch (error) {
-    console.error('Error triggering event:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to trigger event',
-      details: error.message
-    });
-  }
-});
-
 httpServer.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📡 API endpoints available at /api/*`);
   console.log(`🔌 Socket.IO server ready for connections`);
-  console.log(`✨ Admin Panel (Demo Magic Wand) available at http://localhost:5173/dashboard`);
 });
 

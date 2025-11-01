@@ -13,12 +13,12 @@ export default function Navbar() {
             <Link to="/" className="font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 via-violet-400 to-indigo-400 tracking-tight">
               SafeRoute Live
             </Link>
-            <div className="hidden md:flex items-center gap-6 text-sm text-slate-200">
-              <NavLink to="/" className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Home</NavLink>
-              <NavLink to="/route-planner" className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Route Planner</NavLink>
-              <NavLink to="/share" className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Share Live</NavLink>
-              <NavLink to="/dashboard" className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Dashboard</NavLink>
-              <NavLink to="/login" className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Login</NavLink>
+            <div className="hidden md:flex items-center gap-6 text-sm text-slate-700 dark:text-slate-200">
+              <NavLink to="/" className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Home</NavLink>
+              <NavLink to="/route-planner" className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Route Planner</NavLink>
+              <NavLink to="/share" className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Share Live</NavLink>
+              <NavLink to="/dashboard" className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Dashboard</NavLink>
+              <NavLink to="/login" className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Login</NavLink>
               <ThemeToggle />
             </div>
             <button className="md:hidden" onClick={() => setOpen(v => !v)} aria-label="Menu">
@@ -27,12 +27,12 @@ export default function Navbar() {
           </div>
           {open && (
             <div className="md:hidden px-4 pb-3">
-              <div className="mt-2 flex flex-col gap-2 text-sm">
-                <NavLink to="/" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Home</NavLink>
-                <NavLink to="/route-planner" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Route Planner</NavLink>
-                <NavLink to="/share" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Share Live</NavLink>
-                <NavLink to="/dashboard" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Dashboard</NavLink>
-                <NavLink to="/login" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-white' : 'hover:text-white'}>Login</NavLink>
+              <div className="mt-2 flex flex-col gap-2 text-sm text-slate-700 dark:text-slate-200">
+                <NavLink to="/" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Home</NavLink>
+                <NavLink to="/route-planner" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Route Planner</NavLink>
+                <NavLink to="/share" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Share Live</NavLink>
+                <NavLink to="/dashboard" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Dashboard</NavLink>
+                <NavLink to="/login" onClick={() => setOpen(false)} className={({ isActive }) => isActive ? 'text-slate-900 dark:text-white font-semibold' : 'hover:text-slate-900 dark:hover:text-white'}>Login</NavLink>
                 <div className="pt-2"><ThemeToggle /></div>
               </div>
             </div>
