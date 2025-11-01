@@ -10,7 +10,7 @@ html, body, #root {
 }
 
 .glass {
-	@apply bg-white/10 dark:bg-black/30 backdrop-blur-md border border-white/20 dark:border-white/10 shadow-xl;
+	@apply bg-white/70 dark:bg-white/10 dark:dark:bg-black/30 backdrop-blur-md border border-slate-300/50 dark:border-white/20 dark:dark:border-white/10 shadow-xl;
 }
 
 

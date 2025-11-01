@@ -1,105 +1,144 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Copy, Check, Share2 } from 'lucide-react';
+import { Copy, Check, Share2, MapPin, Send } from 'lucide-react';
+import { useSocket } from '../context/SocketContext.jsx';
+import ContactList from '../components/ContactList.jsx';
+import ShareRequestToast from '../components/ShareRequestToast.jsx';
+import DirectShare from '../components/DirectShare.jsx';
+import { getActiveSessions } from '../services/shareService.js';
 
 export default function Share() {
   const navigate = useNavigate();
-  const roomId = useMemo(() => Math.random().toString(36).slice(2, 8), []);
-  const [linkCopied, setLinkCopied] = useState(false);
-  const link = `${window.location.origin}/track/${roomId}`;
+  const { shareRequests, setShareRequests, activeSessions, setActiveSessions } = useSocket();
+  const [currentUserId, setCurrentUserId] = useState(null);
 
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(link);
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 2000);
-    } catch (err) {
-      // Fallback for older browsers
-      const textarea = document.createElement('textarea');
-      textarea.value = link;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 2000);
-    }
-  };
-
-  const handleShare = async () => {
-    if (navigator.share) {
+  // Get current user ID from token
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (token) {
       try {
-        await navigator.share({
-          title: 'Track my live location',
-          text: 'Follow my live location',
-          url: link
-        });
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        setCurrentUserId(payload.userId || payload.id);
       } catch (err) {
-        if (err.name !== 'AbortError') {
-          handleCopy();
-        }
+        console.error('Error parsing token:', err);
       }
-    } else {
-      handleCopy();
+    }
+  }, []);
+
+  // Load active sessions on mount
+  useEffect(() => {
+    loadActiveSessions();
+  }, []);
+
+  const loadActiveSessions = async () => {
+    try {
+      const data = await getActiveSessions();
+      setActiveSessions(data.sessions || []);
+    } catch (error) {
+      console.error('Error loading sessions:', error);
     }
   };
+
+  const handleRequestApproved = (sessionData) => {
+    console.log('Request approved:', sessionData);
+    setActiveSessions(prev => [...prev, sessionData]);
+    // Navigate to tracking page
+    navigate(`/share/track/${sessionData.sessionId}`);
+  };
+
+  const handleRequestClose = (requestId) => {
+    setShareRequests(prev => prev.filter(r => r.requestId !== requestId));
+  };
+
+  // Get mock contacts (in production, fetch from API)
+  const contacts = [
+    { id: 'user1', name: 'Alice Johnson', email: 'alice@example.com', phone: '+1234567890' },
+    { id: 'user2', name: 'Bob Smith', email: 'bob@example.com', phone: '+1234567891' },
+    { id: 'user3', name: 'Charlie Brown', email: 'charlie@example.com', phone: '+1234567892' }
+  ].filter(c => c.id !== currentUserId);
 
   return (
-    <div className="p-6 max-w-xl mx-auto h-full flex items-center">
-      <div className="glass rounded-2xl p-6 w-full">
-        <div className="flex items-center gap-3 mb-4">
-          <Share2 className="text-2xl text-blue-400" />
-          <div className="text-xl font-semibold">Share Live Location</div>
+    <div className="p-6 max-w-4xl mx-auto h-full overflow-y-auto">
+      {/* Incoming Share Requests */}
+      {shareRequests.length > 0 && (
+        <div className="mb-6 space-y-3">
+          {shareRequests.map((request) => (
+            <ShareRequestToast
+              key={request.requestId}
+              request={request}
+              onClose={() => handleRequestClose(request.requestId)}
+              onApproved={handleRequestApproved}
+            />
+          ))}
         </div>
-        <div className="mt-2 text-sm text-slate-300">
-          Send this link to a friend so they can track your location in real-time.
-        </div>
-        
-        <div className="mt-6 p-4 rounded-lg bg-black/40 border border-white/10">
-          <div className="flex items-center justify-between gap-3">
-            <div className="font-mono text-xs break-all flex-1">{link}</div>
-            <button
-              onClick={handleCopy}
-              className="p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors flex-shrink-0"
-              title="Copy link"
-            >
-              {linkCopied ? (
-                <Check size={18} className="text-green-400" />
-              ) : (
-                <Copy size={18} className="text-slate-300" />
-              )}
-            </button>
+      )}
+
+      {/* Direct Share - Main Feature */}
+      <div className="mb-6">
+        <DirectShare onShareStarted={(data) => {
+          setActiveSessions(prev => [...prev, data]);
+        }} />
+      </div>
+
+      {/* Contact List - Alternative method */}
+      <div className="mb-6">
+        <ContactList contacts={contacts} currentUserId={currentUserId} />
+      </div>
+
+      {/* Active Sessions */}
+      {activeSessions.length > 0 && (
+        <div className="glass rounded-2xl p-6 space-y-3">
+          <div className="flex items-center gap-2 mb-4">
+            <MapPin className="text-xl text-green-400" />
+            <h2 className="text-xl font-semibold">Active Sessions</h2>
+          </div>
+          
+          <div className="space-y-2">
+            {activeSessions.map((session) => {
+              const otherParticipant = session.participants?.find(
+                p => p.id !== currentUserId
+              );
+              
+              return (
+                <div
+                  key={session.sessionId}
+                  className="glass rounded-lg p-4 flex items-center justify-between hover:bg-white/5 transition-colors"
+                >
+                  <div className="flex items-center gap-3 flex-1">
+                    <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
+                      <MapPin size={20} className="text-green-400" />
+                    </div>
+                    <div>
+                      <div className="font-medium">
+                        Sharing with {otherParticipant?.name || 'Unknown'}
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        Session: {session.sessionId.slice(-8)}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => navigate(`/share/track/${session.sessionId}`)}
+                    className="px-4 py-2 rounded-lg bg-green-500/20 hover:bg-green-500/30 text-green-300 border border-green-500/50 flex items-center gap-2"
+                  >
+                    <MapPin size={16} />
+                    View on Map
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </div>
+      )}
 
-        <div className="mt-6 flex flex-col gap-3">
-          <button
-            onClick={() => navigate(`/track/${roomId}`)}
-            className="w-full px-4 py-3 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:brightness-110 transition-all font-semibold"
-          >
-            Start Tracking
-          </button>
-          <button
-            onClick={handleShare}
-            className="w-full px-4 py-2 rounded-lg glass hover:bg-white/10 transition-all flex items-center justify-center gap-2"
-          >
-            <Share2 size={18} />
-            Share Link
-          </button>
-          <Link 
-            to="/route-planner" 
-            className="w-full px-4 py-2 rounded-lg glass hover:bg-white/10 transition-all text-center"
-          >
-            Back to Route Planner
-          </Link>
-        </div>
-
-        {linkCopied && (
-          <div className="mt-4 p-3 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center gap-2 text-sm text-green-300">
-            <Check size={16} />
-            Link copied to clipboard!
-          </div>
-        )}
+      {/* Back to Route Planner */}
+      <div className="mt-6">
+        <Link 
+          to="/route-planner" 
+          className="w-full px-4 py-2 rounded-lg glass hover:bg-white/10 transition-all text-center block"
+        >
+          Back to Route Planner
+        </Link>
       </div>
     </div>
   );
