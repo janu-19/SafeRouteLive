@@ -244,6 +244,7 @@ export default function RoutePlanner() {
     setDestSuggestions([]);
   };
 
+
   useEffect(() => {
     // Update refs when values change
     sourceRef.current = source;
@@ -523,6 +524,12 @@ export default function RoutePlanner() {
             routes={routes} 
             selectedRoute={selected}
             accidents={accidents}
+            source={source}
+            destination={dest}
+            onCurrentLocationAsSource={(address) => {
+              setSource(address);
+              sourceRef.current = address;
+            }}
           />
         </div>
         <FloatingButtons onRecalculate={handleRecalculate} />

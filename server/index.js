@@ -585,32 +585,115 @@ app.get('/api/getLighting', async (req, res) => {
 });
 
 /**
- * Geocode address to coordinates using Mapbox
+ * Geocode address to coordinates using Mapbox with multiple fallback strategies
  * @param {string} address - Address string
  * @returns {Promise<Array>} [lng, lat] coordinates
  */
 async function geocodeAddress(address) {
-  try {
-    const encodedAddress = encodeURIComponent(address);
-    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodedAddress}.json?access_token=${MAPBOX_ACCESS_TOKEN}&limit=1`;
-    
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Mapbox Geocoding error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    if (data.features && data.features.length > 0) {
-      const coords = data.features[0].center; // [lng, lat]
-      console.log(`✅ Geocoded "${address}" to [${coords[0]}, ${coords[1]}]`);
-      return coords;
-    }
-    
-    throw new Error(`No location found for: ${address}`);
-  } catch (error) {
-    console.error(`❌ Error geocoding address "${address}":`, error.message);
-    throw error; // Don't fallback - let the caller handle the error
+  if (!address || address.trim().length === 0) {
+    throw new Error('Address is required');
   }
+
+  // Clean and prepare address variants
+  const cleanAddress = address.trim();
+  
+  // Extract potential components (for India addresses)
+  const addressParts = cleanAddress.split(',').map(part => part.trim()).filter(part => part.length > 0);
+  
+  // Build progressive fallback addresses
+  const addressVariants = [];
+  
+  // 1. Try original address
+  addressVariants.push(cleanAddress);
+  
+  // 2. Try without postal code (if present)
+  const withoutPostal = addressParts.filter(part => !/^\d{6}$/.test(part)).join(', ');
+  if (withoutPostal !== cleanAddress) {
+    addressVariants.push(withoutPostal);
+  }
+  
+  // 3. Try with key location parts (city, district, state, country)
+  // For format like "N10, 522240, Kuragallu, Mangalagiri, Guntur, Andhra Pradesh, India"
+  // Extract: Kuragallu, Mangalagiri, Guntur, Andhra Pradesh
+  const locationParts = addressParts.filter(part => 
+    !part.match(/^N\d+$|^\d{6}$|^India$/i)
+  );
+  if (locationParts.length > 0) {
+    // Try with all location parts
+    addressVariants.push(locationParts.join(', '));
+    
+    // Try with city/district and state
+    if (locationParts.length >= 2) {
+      addressVariants.push(`${locationParts[locationParts.length - 2]}, ${locationParts[locationParts.length - 1]}`);
+    }
+    
+    // Try with just the main city/district
+    if (locationParts.length >= 1) {
+      addressVariants.push(locationParts[locationParts.length - 2] || locationParts[0]);
+    }
+  }
+  
+  // Remove duplicates
+  const uniqueVariants = [...new Set(addressVariants)];
+  
+  // Try each variant
+  for (const variant of uniqueVariants) {
+    try {
+      const encodedAddress = encodeURIComponent(variant);
+      
+      // Try with India country code for better results
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodedAddress}.json?access_token=${MAPBOX_ACCESS_TOKEN}&country=IN&limit=5`;
+      
+      const response = await fetch(url);
+      if (!response.ok) {
+        continue; // Try next variant
+      }
+
+      const data = await response.json();
+      if (data.features && data.features.length > 0) {
+        // Prefer results in India
+        let bestMatch = data.features.find(f => 
+          f.context && f.context.some(ctx => ctx.id && ctx.id.startsWith('country'))
+        ) || data.features[0];
+        
+        // If we can't find India match, use first result
+        if (!bestMatch || !bestMatch.context || 
+            !bestMatch.context.some(ctx => ctx.id && ctx.id.startsWith('country'))) {
+          bestMatch = data.features[0];
+        }
+        
+        const coords = bestMatch.center; // [lng, lat]
+        console.log(`✅ Geocoded "${variant}" to [${coords[0]}, ${coords[1]}]`);
+        return coords;
+      }
+    } catch (error) {
+      console.log(`⚠️ Failed to geocode variant "${variant}":`, error.message);
+      continue; // Try next variant
+    }
+  }
+  
+  // If all variants failed, try one more time with just the city/state
+  const lastResort = addressParts.slice(-3).join(', ');
+  if (lastResort !== cleanAddress) {
+    try {
+      const encodedAddress = encodeURIComponent(lastResort);
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodedAddress}.json?access_token=${MAPBOX_ACCESS_TOKEN}&country=IN&limit=3`;
+      
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.features && data.features.length > 0) {
+          const coords = data.features[0].center;
+          console.log(`✅ Geocoded fallback "${lastResort}" to [${coords[0]}, ${coords[1]}]`);
+          return coords;
+        }
+      }
+    } catch (error) {
+      console.log(`⚠️ Fallback geocoding failed:`, error.message);
+    }
+  }
+  
+  throw new Error(`No location found for: ${address}`);
 }
 
 /**
