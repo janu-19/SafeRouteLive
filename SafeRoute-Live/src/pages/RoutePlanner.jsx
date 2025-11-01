@@ -5,7 +5,7 @@ import RouteCard from '../components/RouteCard.jsx';
 import FloatingButtons from '../components/FloatingButtons.jsx';
 import FeedbackModal from '../components/FeedbackModal.jsx';
 import AISuggestionModal from '../components/AISuggestionModal.jsx';
-import { getSafeRoutes, getAccidents, getAISafetySuggestion } from '../utils/api.js';
+import { getSafeRoutes, getAccidents, getAISafetySuggestion, getAddressSuggestions } from '../utils/api.js';
 
 export default function RoutePlanner() {
   const [source, setSource] = useState('MG Road, Bengaluru');
@@ -21,18 +21,48 @@ export default function RoutePlanner() {
   const [aiSuggestion, setAISuggestion] = useState(null);
   const [loadingAI, setLoadingAI] = useState(false);
   const [routeCompleted, setRouteCompleted] = useState(false);
+  const [sourceSuggestions, setSourceSuggestions] = useState([]);
+  const [destSuggestions, setDestSuggestions] = useState([]);
+  const [showSourceSuggestions, setShowSourceSuggestions] = useState(false);
+  const [showDestSuggestions, setShowDestSuggestions] = useState(false);
   const intervalRef = useRef(null);
-  const lastFetchRef = useRef({ source, dest, pref });
+  const lastFetchRef = useRef(null); // Initialize as null, only set after successful search
   const routeStartTimeRef = useRef(null);
+  const sourceRef = useRef(source);
+  const destRef = useRef(dest);
+  const prefRef = useRef(pref);
+  const isSearchingRef = useRef(false);
+  const allowAutoRefreshRef = useRef(false);
+  const sourceInputRef = useRef(null);
+  const destInputRef = useRef(null);
+  const sourceSuggestionsRef = useRef(null);
+  const destSuggestionsRef = useRef(null);
+  const sourceDebounceTimerRef = useRef(null);
+  const destDebounceTimerRef = useRef(null);
 
-  const fetchSafeRoutes = async () => {
-    if (!source || !dest) return;
+  const fetchSafeRoutes = async (isManual = false) => {
+    // Prevent multiple simultaneous searches
+    if (isSearchingRef.current) return;
     
+    // Use refs to get current values to avoid closure issues
+    const currentSource = sourceRef.current || source;
+    const currentDest = destRef.current || dest;
+    const currentPref = prefRef.current || pref;
+    
+    if (!currentSource || !currentDest) return;
+    
+    // ONLY allow manual searches (button clicks) - block ALL automatic searches
+    if (!isManual) {
+      // Completely block automatic route fetching
+      return;
+    }
+    
+    isSearchingRef.current = true;
     setLoading(true);
     setError(null);
     
     try {
-      const response = await getSafeRoutes(source, dest, pref);
+      const response = await getSafeRoutes(currentSource, currentDest, currentPref);
       const formattedRoutes = response.routes.map((route, index) => ({
         ...route,
         id: route.id,
@@ -69,22 +99,36 @@ export default function RoutePlanner() {
         }
       }
       
-      lastFetchRef.current = { source, dest, pref };
+      // Only update lastFetchRef after successful search
+      lastFetchRef.current = { source: currentSource, dest: currentDest, pref: currentPref };
       
       // Track route start time for completion simulation
       if (formattedRoutes.length > 0) {
         routeStartTimeRef.current = Date.now();
         setRouteCompleted(false);
+        // Enable auto-refresh ONLY after a successful MANUAL search
+        // Automatic searches should never enable auto-refresh
+        if (isManual) {
+          allowAutoRefreshRef.current = true;
+        } else {
+          // This was an automatic refresh - keep auto-refresh enabled only if already enabled
+          // Don't change the state
+        }
+      } else {
+        // If no routes returned, disable auto-refresh
+        allowAutoRefreshRef.current = false;
       }
     } catch (err) {
       console.error('Error fetching safe routes:', err);
       if (err.message?.includes('Failed to fetch') || err.message?.includes('Connection refused')) {
         setError('Backend server is not running. Please start the server on port 3001.');
       } else {
-        setError('Failed to fetch safe routes. Please check your connection.');
+        // Use error message from API response if available
+        setError(err.data?.error || err.message || 'Failed to fetch safe routes. Please try again with more specific location names.');
       }
     } finally {
       setLoading(false);
+      isSearchingRef.current = false;
     }
   };
 
@@ -102,35 +146,160 @@ export default function RoutePlanner() {
     }
   };
 
+  // Fetch address suggestions with debouncing
+  const fetchSuggestions = async (query, setSuggestions, setShow) => {
+    if (!query || query.length < 2) {
+      setSuggestions([]);
+      setShow(false);
+      return;
+    }
+
+    try {
+      const results = await getAddressSuggestions(query);
+      setSuggestions(results);
+      setShow(true);
+    } catch (err) {
+      console.error('Error fetching suggestions:', err);
+      setSuggestions([]);
+    }
+  };
+
+  // Debounced search for source
+  useEffect(() => {
+    if (sourceDebounceTimerRef.current) {
+      clearTimeout(sourceDebounceTimerRef.current);
+    }
+
+    sourceDebounceTimerRef.current = setTimeout(() => {
+      fetchSuggestions(source, setSourceSuggestions, setShowSourceSuggestions);
+    }, 300); // 300ms debounce
+
+    return () => {
+      if (sourceDebounceTimerRef.current) {
+        clearTimeout(sourceDebounceTimerRef.current);
+      }
+    };
+  }, [source]);
+
+  // Debounced search for destination
+  useEffect(() => {
+    if (destDebounceTimerRef.current) {
+      clearTimeout(destDebounceTimerRef.current);
+    }
+
+    destDebounceTimerRef.current = setTimeout(() => {
+      fetchSuggestions(dest, setDestSuggestions, setShowDestSuggestions);
+    }, 300); // 300ms debounce
+
+    return () => {
+      if (destDebounceTimerRef.current) {
+        clearTimeout(destDebounceTimerRef.current);
+      }
+    };
+  }, [dest]);
+
+  // Close suggestions when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (
+        sourceInputRef.current && !sourceInputRef.current.contains(event.target) &&
+        sourceSuggestionsRef.current && !sourceSuggestionsRef.current.contains(event.target)
+      ) {
+        setShowSourceSuggestions(false);
+      }
+      if (
+        destInputRef.current && !destInputRef.current.contains(event.target) &&
+        destSuggestionsRef.current && !destSuggestionsRef.current.contains(event.target)
+      ) {
+        setShowDestSuggestions(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
   // Initial fetch
   useEffect(() => {
     fetchAccidents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Handle suggestion selection
+  const handleSourceSuggestion = (suggestion) => {
+    const address = suggestion.place_name || suggestion.text;
+    setSource(address);
+    sourceRef.current = address;
+    setShowSourceSuggestions(false);
+    setSourceSuggestions([]);
+  };
+
+  const handleDestSuggestion = (suggestion) => {
+    const address = suggestion.place_name || suggestion.text;
+    setDest(address);
+    destRef.current = address;
+    setShowDestSuggestions(false);
+    setDestSuggestions([]);
+  };
+
   useEffect(() => {
-    // Set up interval for real-time updates (every 10 seconds)
+    // Update refs when values change
+    sourceRef.current = source;
+    destRef.current = dest;
+    prefRef.current = pref;
+    
+    // Clear routes when user changes addresses (prevent stale data)
+    const last = lastFetchRef.current;
+    
+    if (last && last.source && last.dest) {
+      const current = { source, dest, pref };
+      
+      // If parameters changed from the last successful fetch, clear routes
+      if (current.source !== last.source || current.dest !== last.dest || current.pref !== last.pref) {
+        // Clear routes if they exist
+        if (routes.length > 0) {
+          setRoutes([]);
+          setSelected(null);
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, dest, pref]); // Only depend on source, dest, pref - not routes.length
+
+  useEffect(() => {
+    // Set up interval ONLY for fetching accidents (not routes)
+    // Routes will ONLY be fetched on manual button clicks
     if (routes.length > 0) {
+      // Clear any existing interval first
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+      
+      // Only fetch accidents, NEVER fetch routes automatically
       intervalRef.current = setInterval(() => {
         fetchAccidents();
-        // Only refresh routes if parameters haven't changed
-        const current = { source, dest, pref };
-        const last = lastFetchRef.current;
-        if (current.source === last.source && current.dest === last.dest && current.pref === last.pref) {
-          fetchSafeRoutes();
-        }
+        // Routes are NEVER fetched automatically - only via button click
       }, 10000); // 10 seconds
+    } else {
+      // Clear interval if no routes
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
     }
 
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
+        intervalRef.current = null;
       }
     };
-  }, [routes.length, source, dest, pref]);
+  }, [routes.length]); // Only recreate interval when routes.length changes
 
   const handleRecalculate = () => {
-    fetchSafeRoutes();
+    fetchSafeRoutes(true); // Pass true to indicate manual search
   };
 
   const handleAISuggestion = async () => {
@@ -181,23 +350,91 @@ export default function RoutePlanner() {
     <div className="h-full w-full grid grid-cols-1 lg:grid-cols-[380px_1fr]">
       <div className="p-4 space-y-3 order-2 lg:order-1 overflow-y-auto">
         <div className="glass rounded-2xl p-4 space-y-3">
-          <div>
+          <div className="relative">
             <label className="text-xs opacity-80">Source</label>
-            <input 
-              className="mt-1 w-full rounded-lg bg-transparent border border-white/20 px-3 py-2 outline-none" 
-              value={source} 
-              onChange={(e)=>setSource(e.target.value)}
-              placeholder="Enter source location"
-            />
+            <div ref={sourceInputRef} className="relative">
+              <input 
+                className="mt-1 w-full rounded-lg bg-transparent border border-white/20 px-3 py-2 outline-none" 
+                value={source} 
+                onChange={(e)=>{
+                  sourceRef.current = e.target.value;
+                  setSource(e.target.value);
+                  setShowSourceSuggestions(true);
+                }}
+                onFocus={() => {
+                  if (sourceSuggestions.length > 0) {
+                    setShowSourceSuggestions(true);
+                  }
+                }}
+                placeholder="Enter source location"
+              />
+              {showSourceSuggestions && sourceSuggestions.length > 0 && (
+                <div
+                  ref={sourceSuggestionsRef}
+                  className="absolute z-50 w-full mt-1 bg-gray-900/95 backdrop-blur-lg border border-white/30 rounded-lg overflow-hidden shadow-xl max-h-60 overflow-y-auto"
+                >
+                  {sourceSuggestions.map((suggestion, index) => (
+                    <div
+                      key={index}
+                      onClick={() => handleSourceSuggestion(suggestion)}
+                      className="px-4 py-3 hover:bg-blue-600/30 cursor-pointer border-b border-white/10 last:border-b-0 transition-colors"
+                    >
+                      <div className="font-medium text-white text-sm">
+                        {suggestion.text || suggestion.place_name}
+                      </div>
+                      {suggestion.context && (
+                        <div className="text-xs text-white/70 mt-1">
+                          {suggestion.context.map((ctx, i) => ctx.text).join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-          <div>
+          <div className="relative">
             <label className="text-xs opacity-80">Destination</label>
-            <input 
-              className="mt-1 w-full rounded-lg bg-transparent border border-white/20 px-3 py-2 outline-none" 
-              value={dest} 
-              onChange={(e)=>setDest(e.target.value)}
-              placeholder="Enter destination location"
-            />
+            <div ref={destInputRef} className="relative">
+              <input 
+                className="mt-1 w-full rounded-lg bg-transparent border border-white/20 px-3 py-2 outline-none" 
+                value={dest} 
+                onChange={(e)=>{
+                  destRef.current = e.target.value;
+                  setDest(e.target.value);
+                  setShowDestSuggestions(true);
+                }}
+                onFocus={() => {
+                  if (destSuggestions.length > 0) {
+                    setShowDestSuggestions(true);
+                  }
+                }}
+                placeholder="Enter destination location"
+              />
+              {showDestSuggestions && destSuggestions.length > 0 && (
+                <div
+                  ref={destSuggestionsRef}
+                  className="absolute z-50 w-full mt-1 bg-gray-900/95 backdrop-blur-lg border border-white/30 rounded-lg overflow-hidden shadow-xl max-h-60 overflow-y-auto"
+                >
+                  {destSuggestions.map((suggestion, index) => (
+                    <div
+                      key={index}
+                      onClick={() => handleDestSuggestion(suggestion)}
+                      className="px-4 py-3 hover:bg-blue-600/30 cursor-pointer border-b border-white/10 last:border-b-0 transition-colors"
+                    >
+                      <div className="font-medium text-white text-sm">
+                        {suggestion.text || suggestion.place_name}
+                      </div>
+                      {suggestion.context && (
+                        <div className="text-xs text-white/70 mt-1">
+                          {suggestion.context.map((ctx, i) => ctx.text).join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -205,7 +442,10 @@ export default function RoutePlanner() {
               <select 
                 className="mt-1 w-full rounded-lg bg-transparent border border-white/20 px-3 py-2" 
                 value={pref} 
-                onChange={(e)=>setPref(e.target.value)}
+                onChange={(e)=>{
+                  prefRef.current = e.target.value;
+                  setPref(e.target.value);
+                }}
               >
                 <option>Well-lit</option>
                 <option>Crowded</option>
@@ -214,7 +454,7 @@ export default function RoutePlanner() {
             </div>
             <div className="flex items-end">
               <button 
-                onClick={fetchSafeRoutes} 
+                onClick={() => fetchSafeRoutes(true)} 
                 disabled={loading}
                 className="w-full rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 py-2 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
               >

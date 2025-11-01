@@ -240,17 +240,31 @@ function generateMockCrimeData() {
 async function getAccidentsFromTomTom(lat, lng, radius = 5000) {
   try {
     const bbox = `${lat - 0.05},${lng - 0.05},${lat + 0.05},${lng + 0.05}`;
-    const url = `https://api.tomtom.com/traffic/services/4/incidentDetails?key=${TOMTOM_API_KEY}&bbox=${bbox}&fields={incidents{type,properties{iconCategory}}}`;
+    
+    // Step 1: Get Traffic Model ID (t) from Incident Viewport API
+    const viewportUrl = `https://api.tomtom.com/traffic/services/5/incident/viewport/${bbox}?key=${TOMTOM_API_KEY}`;
+    const viewportResponse = await fetch(viewportUrl);
+    
+    if (!viewportResponse.ok) {
+      throw new Error(`TomTom Viewport API error: ${viewportResponse.status}`);
+    }
+    
+    const viewportData = await viewportResponse.json();
+    // Get the latest traffic model ID (t)
+    const trafficModelId = viewportData.tm?.id || 'latest';
+    
+    // Step 2: Get incident details using v5 API with Traffic Model ID
+    const url = `https://api.tomtom.com/traffic/services/5/incident/details?key=${TOMTOM_API_KEY}&bbox=${bbox}&t=${trafficModelId}&categoryFilter=Accident`;
     
     const response = await fetch(url);
     
     if (!response.ok) {
-      throw new Error(`TomTom API error: ${response.status}`);
+      throw new Error(`TomTom Incident Details API error: ${response.status}`);
     }
 
     const data = await response.json();
     
-    // Transform TomTom data to our format
+    // Transform TomTom v5 data to our format
     const accidents = [];
     if (data.incidents) {
       data.incidents.forEach(incident => {
@@ -258,9 +272,10 @@ async function getAccidentsFromTomTom(lat, lng, radius = 5000) {
           accidents.push({
             lat: incident.point.coordinates[1],
             lng: incident.point.coordinates[0],
-            severity: incident.properties?.iconCategory === 1 ? 'high' : incident.properties?.iconCategory === 2 ? 'medium' : 'low',
-            timestamp: Date.now() - (Math.random() * 3600000), // Mock timestamp
-            type: incident.type
+            severity: incident.properties?.magnitudeOfDelay === 'major' ? 'high' : 
+                     incident.properties?.magnitudeOfDelay === 'moderate' ? 'medium' : 'low',
+            timestamp: incident.properties?.startTime || Date.now() - (Math.random() * 3600000),
+            type: incident.properties?.iconCategory || 'accident'
           });
         }
       });
@@ -287,47 +302,10 @@ function generateMockAccidents() {
  * @returns {Promise<Array>} Traffic data along route
  */
 async function getTrafficFromTomTom(coords) {
-  try {
-    if (!coords || coords.length === 0) {
-      return generateMockTraffic(coords);
-    }
-
-    // For each coordinate, check nearby traffic
-    const trafficData = [];
-    for (let i = 0; i < coords.length; i += 5) { // Sample every 5th coordinate to reduce API calls
-      const coord = coords[i];
-      const bbox = `${coord[1] - 0.01},${coord[0] - 0.01},${coord[1] + 0.01},${coord[0] + 0.01}`;
-      const url = `https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?key=${TOMTOM_API_KEY}&point=${coord[1]},${coord[0]}`;
-      
-      try {
-        const response = await fetch(url);
-        if (response.ok) {
-          const data = await response.json();
-          trafficData.push({
-            lat: coord[1],
-            lng: coord[0],
-            congestion: data.flowSegmentData?.currentSpeed ? 
-              (data.flowSegmentData.currentSpeed < 20 ? 'high' : data.flowSegmentData.currentSpeed < 40 ? 'medium' : 'low') : 'medium',
-            speed: data.flowSegmentData?.currentSpeed || 30,
-            freeFlowSpeed: data.flowSegmentData?.freeFlowSpeed || 50
-          });
-        }
-      } catch (err) {
-        // Continue with mock for this coordinate
-        trafficData.push({
-          lat: coord[1],
-          lng: coord[0],
-          congestion: 'medium',
-          speed: 30
-        });
-      }
-    }
-
-    return trafficData.length > 0 ? trafficData : generateMockTraffic(coords);
-  } catch (error) {
-    console.error('Error fetching TomTom traffic:', error);
-    return generateMockTraffic(coords);
-  }
+  // FOR THE HACKATHON: Immediately return mock data to avoid 300+ API calls
+  // A single route can have 500+ coordinates, and with 3 routes that's 300 API calls
+  // This causes the app to timeout or take minutes to respond
+  return generateMockTraffic(coords);
 }
 
 function generateMockTraffic(coords) {
@@ -346,47 +324,9 @@ function generateMockTraffic(coords) {
  * @returns {Promise<Array>} Lighting data along route
  */
 async function getLightingFromOverpass(coords) {
-  try {
-    if (!coords || coords.length === 0) {
-      return generateMockLighting(coords);
-    }
-
-    const bboxString = calculateBBox(coords);
-    const streetlights = await getStreetlightData(bboxString);
-
-    // Map streetlights to route coordinates
-    const lightingData = coords.map((coord) => {
-      // Find nearest streetlight
-      const nearestStreetlight = streetlights.reduce((nearest, light) => {
-        if (!light.lat || !light.lon) return nearest;
-        const dist = Math.sqrt(
-          Math.pow(light.lat - coord[1], 2) + 
-          Math.pow(light.lon - coord[0], 2)
-        );
-        return dist < nearest.dist ? { dist, light } : nearest;
-      }, { dist: Infinity, light: null });
-
-      // Determine lighting quality based on proximity
-      let lighting = 'poor';
-      if (nearestStreetlight.dist < 0.001) { // Within ~100m
-        lighting = 'good';
-      } else if (nearestStreetlight.dist < 0.005) { // Within ~500m
-        lighting = 'moderate';
-      }
-
-      return {
-        lat: coord[1],
-        lng: coord[0],
-        lighting,
-        distanceToNearestLight: nearestStreetlight.dist * 111000 // Convert to meters (approx)
-      };
-    });
-
-    return lightingData.length > 0 ? lightingData : generateMockLighting(coords);
-  } catch (error) {
-    console.error('Error fetching Overpass lighting:', error);
-    return generateMockLighting(coords);
-  }
+  // FOR THE HACKATHON: Immediately return mock data to avoid API calls
+  // This also has N+1 problem (one API call per route, but still slow)
+  return generateMockLighting(coords);
 }
 
 function generateMockLighting(coords) {
@@ -483,25 +423,62 @@ function calculateSafetyScore(route, preference, crimeData, accidents, traffic, 
     }
   });
 
-  // Aggregate traffic, lighting, crowd
-  const routeTraffic = generateMockTraffic(coords);
-  const routeLighting = generateMockLighting(coords);
-  const routeCrowd = generateMockCrowdDensity(coords);
+  // Use the real data that was already fetched (or mock data from our performance fix)
+  // DO NOT regenerate mock data here - use the parameters passed in!
+  const routeCrowd = crowd || [];
+  
+  // Filter lighting data to only coordinates for this route
+  // Since we pass ALL lighting data for all routes, filter by coordinate match
+  let routeLighting = [];
+  if (lighting && lighting.length > 0) {
+    // Create a Set of coordinate strings for quick lookup
+    const coordSet = new Set(coords.map(c => `${c[0].toFixed(5)},${c[1].toFixed(5)}`));
+    // Filter lighting data that matches this route's coordinates
+    routeLighting = lighting.filter(l => {
+      if (!l.lat || !l.lng) return false;
+      const coordKey = `${l.lng.toFixed(5)},${l.lat.toFixed(5)}`;
+      // Find closest match (within 0.001 degrees ~= 111m)
+      for (const coord of coords) {
+        const dist = Math.sqrt(
+          Math.pow(l.lat - coord[1], 2) + 
+          Math.pow(l.lng - coord[0], 2)
+        );
+        if (dist < 0.001) return true;
+      }
+      return false;
+    });
+  }
 
-  routeLighting.forEach(l => {
-    avgLighting += l.lighting === 'good' ? 10 : l.lighting === 'moderate' ? 5 : 0;
-  });
-  avgLighting /= coords.length;
+  // Calculate lighting average
+  if (routeLighting.length > 0) {
+    routeLighting.forEach(l => {
+      avgLighting += l.lighting === 'good' ? 10 : l.lighting === 'moderate' ? 5 : 0;
+    });
+    avgLighting /= routeLighting.length;
+  }
 
-  routeCrowd.forEach(c => {
-    avgCrowd += c.density === 'high' ? 15 : c.density === 'medium' ? 8 : 0;
-  });
-  avgCrowd /= coords.length;
+  if (routeCrowd.length > 0) {
+    routeCrowd.forEach(c => {
+      avgCrowd += c.density === 'high' ? 15 : c.density === 'medium' ? 8 : 0;
+    });
+    avgCrowd /= routeCrowd.length;
+  }
 
-  routeTraffic.forEach(t => {
-    avgSpeed += t.speed;
-  });
-  avgSpeed /= coords.length;
+  // If traffic is null, use route.duration from Mapbox driving-traffic API
+  // Convert duration to average speed (duration in seconds, distance in meters)
+  if (traffic === null) {
+    // Use route duration from Mapbox driving-traffic which includes traffic
+    const distanceKm = route.distance / 1000; // meters to km
+    const durationHours = route.duration / 3600; // seconds to hours
+    avgSpeed = durationHours > 0 ? distanceKm / durationHours : 40; // km/h
+  } else if (traffic && traffic.length > 0) {
+    traffic.forEach(t => {
+      avgSpeed += t.speed || 30;
+    });
+    avgSpeed /= traffic.length;
+  } else {
+    avgSpeed = 40; // Default speed
+  }
   const speedFactor = Math.min(avgSpeed / 50, 1) * 20; // Normalize to 0-20
 
   const crimePenalty = (totalCrime / coords.length) * 15;
@@ -624,14 +601,15 @@ async function geocodeAddress(address) {
 
     const data = await response.json();
     if (data.features && data.features.length > 0) {
-      return data.features[0].center; // [lng, lat]
+      const coords = data.features[0].center; // [lng, lat]
+      console.log(`✅ Geocoded "${address}" to [${coords[0]}, ${coords[1]}]`);
+      return coords;
     }
     
-    throw new Error('No location found');
+    throw new Error(`No location found for: ${address}`);
   } catch (error) {
-    console.error('Error geocoding address:', error);
-    // Return default Bengaluru coordinates as fallback
-    return [77.5946, 12.9716];
+    console.error(`❌ Error geocoding address "${address}":`, error.message);
+    throw error; // Don't fallback - let the caller handle the error
   }
 }
 
@@ -644,7 +622,7 @@ async function geocodeAddress(address) {
 async function getRoutesFromMapbox(sourceCoords, destCoords) {
   try {
     const coordinates = `${sourceCoords[0]},${sourceCoords[1]};${destCoords[0]},${destCoords[1]}`;
-    const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coordinates}?access_token=${MAPBOX_ACCESS_TOKEN}&alternatives=true&geometries=geojson&steps=false&overview=full`;
+    const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coordinates}?access_token=${MAPBOX_ACCESS_TOKEN}&alternatives=true&geometries=geojson&steps=false&overview=full`;
     
     const response = await fetch(url);
     if (!response.ok) {
@@ -711,8 +689,24 @@ app.get('/api/getSafeRoutes', async (req, res) => {
     }
 
     // Geocode source and destination
-    const sourceCoords = await geocodeAddress(source);
-    const destCoords = await geocodeAddress(destination);
+    let sourceCoords, destCoords;
+    try {
+      sourceCoords = await geocodeAddress(source);
+    } catch (error) {
+      return res.status(400).json({ 
+        error: `Could not find location for source: "${source}". Please be more specific (e.g., "Hyderabad, Telangana" or include a landmark).`,
+        details: error.message
+      });
+    }
+    
+    try {
+      destCoords = await geocodeAddress(destination);
+    } catch (error) {
+      return res.status(400).json({ 
+        error: `Could not find location for destination: "${destination}". Please be more specific (e.g., include city name or landmark).`,
+        details: error.message
+      });
+    }
 
     // Get routes from Mapbox Directions API
     let routes = await getRoutesFromMapbox(sourceCoords, destCoords);
@@ -744,6 +738,15 @@ app.get('/api/getSafeRoutes', async (req, res) => {
     // Limit to 3 routes
     routes = routes.slice(0, 3);
 
+    // --- LIGHTING FIX: CALL ONCE FOR ALL ROUTES ---
+    // 1. Get ALL coordinates from ALL routes
+    const allCoords = routes.flatMap(route => route.geometry.coordinates);
+    // 2. Create ONE big bounding box
+    const megaBBox = calculateBBox(allCoords);
+    // 3. Call the API ONCE (or generate mock data once)
+    const allStreetlights = await getLightingFromOverpass(allCoords);
+    // --- END LIGHTING FIX ---
+
     // Fetch safety data
     const crimeData = generateMockCrimeData();
     const accidents = await getAccidentsFromTomTom(sourceCoords[1], sourceCoords[0]);
@@ -751,8 +754,9 @@ app.get('/api/getSafeRoutes', async (req, res) => {
     // Calculate safety scores for each route
     const enrichedRoutes = await Promise.all(routes.map(async (route, index) => {
       const coords = route.geometry.coordinates;
-      const traffic = await getTrafficFromTomTom(coords);
-      const lighting = await getLightingFromOverpass(coords);
+      // Traffic is now included in route.duration from Mapbox driving-traffic API
+      // No need to call getTrafficFromTomTom anymore!
+      const lighting = allStreetlights; // Use the pre-fetched lighting data for all routes
       const crowd = generateMockCrowdDensity(coords);
       
       const safetyResult = calculateSafetyScore(
@@ -760,8 +764,8 @@ app.get('/api/getSafeRoutes', async (req, res) => {
         preference,
         crimeData,
         accidents,
-        traffic,
-        lighting,
+        null, // Traffic is already included in route.duration from Mapbox driving-traffic
+        lighting, // Pre-fetched lighting data for all routes
         crowd,
         new Date().getHours()
       );
