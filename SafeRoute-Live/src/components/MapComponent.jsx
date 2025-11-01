@@ -74,20 +74,76 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
       }
     });
 
-    // Socket listeners
-    const socket = io();
+    // Socket listeners - for live safety updates from Admin Panel
+    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+    const socket = io(API_BASE_URL);
+    
     socket.on('connect', () => {
-      // Connected
+      console.log('✅ MapComponent: Socket connected for live safety updates');
     });
+    
     socket.on('safety-update', (payload) => {
-      // Could update heatmap source here
-      // console.log('safety-update', payload);
+      console.log('🎯 Safety update received:', payload);
+      
+      // Update heatmap when live event is triggered
+      if (payload.type === 'live-event' && payload.event) {
+        const event = payload.event;
+        const heatSource = map.getSource(heatSourceIdRef.current);
+        
+        if (heatSource) {
+          const currentData = heatSource._data || { type: 'FeatureCollection', features: [] };
+          
+          // Add new safety event point to heatmap
+          const newFeature = {
+            type: 'Feature',
+            geometry: {
+              type: 'Point',
+              coordinates: [event.lng, event.lat]
+            },
+            properties: {
+              intensity: Math.abs(event.severity) / 10 // Convert severity to heat intensity
+            }
+          };
+          
+          currentData.features.push(newFeature);
+          
+          // Update heatmap source - this creates the "wow" moment!
+          heatSource.setData(currentData);
+          
+          // Also add a marker/popup for the event
+          new mapboxgl.Popup({ closeOnClick: false })
+            .setLngLat([event.lng, event.lat])
+            .setHTML(`
+              <div class="text-sm">
+                <strong>${event.eventType.toUpperCase()}</strong><br/>
+                Severity: ${event.severity}<br/>
+                <small>Live event detected</small>
+              </div>
+            `)
+            .addTo(map);
+        }
+        
+        // Update accidents layer too
+        const accidentsSource = map.getSource(accidentsSourceRef.current);
+        if (accidentsSource) {
+          const currentAccidents = accidentsSource._data || { type: 'FeatureCollection', features: [] };
+          currentAccidents.features.push({
+            type: 'Feature',
+            properties: { severity: event.severity < -7 ? 'high' : event.severity < -4 ? 'medium' : 'low' },
+            geometry: {
+              type: 'Point',
+              coordinates: [event.lng, event.lat]
+            }
+          });
+          accidentsSource.setData(currentAccidents);
+        }
+      }
     });
+    
     socket.on('route-alert', (payload) => {
       try {
         window.speechSynthesis?.speak(new SpeechSynthesisUtterance('Re-routing due to safety alert'));
       } catch (_) {}
-      // eslint-disable-next-line no-console
       console.log('Re-routing…', payload);
     });
 
@@ -182,11 +238,12 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
     }
   }, [routes, selectedRoute]);
 
-  // Update accidents markers
+  // Update accidents markers and heatmap
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map || !map.isStyleLoaded?.()) return;
 
+    // Update accidents layer
     const accidentsGeoJSON = {
       type: 'FeatureCollection',
       features: accidents.map(accident => ({
@@ -199,9 +256,70 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
       }))
     };
 
-    const source = map.getSource(accidentsSourceRef.current);
-    if (source) {
-      source.setData(accidentsGeoJSON);
+    const accidentsSource = map.getSource(accidentsSourceRef.current);
+    if (accidentsSource) {
+      accidentsSource.setData(accidentsGeoJSON);
+    }
+
+    // Update heatmap layer with safety score data
+    // Create heatmap points from accidents - lower safety score = higher heat intensity
+    const heatGeoJSON = {
+      type: 'FeatureCollection',
+      features: accidents.map(accident => {
+        // Convert severity to heat intensity (inverse relationship)
+        // high severity = higher heat (red), low severity = lower heat (green)
+        const severityValue = accident.severity === 'high' ? 3 : accident.severity === 'medium' ? 2 : 1;
+        
+        return {
+          type: 'Feature',
+          geometry: {
+            type: 'Point',
+            coordinates: [accident.lng, accident.lat]
+          },
+          properties: {
+            // Intensity: 0-1, higher = more red on heatmap
+            // High severity = 0.8-1.0, Medium = 0.5-0.8, Low = 0.2-0.5
+            intensity: severityValue === 3 ? 0.9 : severityValue === 2 ? 0.6 : 0.3
+          }
+        };
+      })
+    };
+
+    const heatSource = map.getSource(heatSourceIdRef.current);
+    if (heatSource) {
+      heatSource.setData(heatGeoJSON);
+      
+      // Update heatmap paint properties for better visualization
+      map.setPaintProperty(heatLayerIdRef.current, 'heatmap-intensity', [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        0, 0.6,
+        10, 0.8,
+        15, 1.0
+      ]);
+      
+      map.setPaintProperty(heatLayerIdRef.current, 'heatmap-radius', [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        0, 20,
+        10, 30,
+        15, 40
+      ]);
+      
+      // Heatmap color stops: green (safe) to red (dangerous)
+      map.setPaintProperty(heatLayerIdRef.current, 'heatmap-color', [
+        'interpolate',
+        ['linear'],
+        ['heatmap-density'],
+        0, 'rgba(34, 197, 94, 0)',        // Green (transparent)
+        0.2, 'rgba(34, 197, 94, 0.5)',   // Green
+        0.4, 'rgba(251, 191, 36, 0.6)',  // Yellow
+        0.6, 'rgba(249, 115, 22, 0.7)',  // Orange
+        0.8, 'rgba(239, 68, 68, 0.8)',  // Red
+        1, 'rgba(220, 38, 38, 1)'         // Dark Red
+      ]);
     }
   }, [accidents]);
 

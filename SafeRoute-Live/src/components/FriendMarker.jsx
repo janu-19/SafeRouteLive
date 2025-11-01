@@ -37,11 +37,15 @@ function FriendMarker({ map, location, userId, friendIndex = 0 }) {
 
     // Create or update marker
     if (!markerRef.current) {
+      const popupText = location.userName 
+        ? `Live from ${location.userName}`
+        : `Friend: ${userId}`;
+      
       markerRef.current = MapView.addMarker(map, coordinates, {
         color: color,
         scale: 1,
         rotation: location.heading || 0,
-        popupText: `Friend: ${userId}`
+        popupText: popupText
       });
     } else {
       MapView.updateMarker(markerRef.current, coordinates, location.heading || 0);
@@ -68,10 +72,14 @@ export function FriendMarkers({ map, friends }) {
     <>
       {friends.map((friend, index) => (
         <FriendMarker
-          key={friend.userId}
+          key={friend.userId || friend.userName || index}
           map={map}
-          location={friend.location}
-          userId={friend.userId}
+          location={{
+            ...friend.location,
+            userName: friend.userName,
+            lastUpdate: friend.lastUpdate
+          }}
+          userId={friend.userId || friend.userName}
           friendIndex={index}
         />
       ))}

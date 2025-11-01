@@ -147,8 +147,23 @@ export default function RoutePlanner() {
   };
 
   // Fetch address suggestions with debouncing
+  // Helper function to check if input is coordinates
+  const isCoordinates = (text) => {
+    if (!text) return false;
+    const parts = text.split(',');
+    // Check if it's two parts, and both are valid numbers
+    return parts.length === 2 && !isNaN(parseFloat(parts[0])) && !isNaN(parseFloat(parts[1]));
+  };
+
   const fetchSuggestions = async (query, setSuggestions, setShow) => {
     if (!query || query.length < 2) {
+      setSuggestions([]);
+      setShow(false);
+      return;
+    }
+
+    // Don't fetch suggestions if the input is already coordinates
+    if (isCoordinates(query)) {
       setSuggestions([]);
       setShow(false);
       return;
@@ -333,6 +348,32 @@ export default function RoutePlanner() {
     setShowFeedbackModal(true);
   };
 
+  // Get user's current location and set it as source
+  const handleFindMyLocation = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          // Success! We got the user's location.
+          const { latitude, longitude } = position.coords;
+          console.log('✅ Got user location:', latitude, longitude);
+          
+          // Set the "Source" input to the coordinates as a string.
+          // Our backend will be smart enough to understand this.
+          const coordsString = `${latitude},${longitude}`;
+          setSource(coordsString);
+          sourceRef.current = coordsString;
+        },
+        (error) => {
+          // Handle errors (e.g., user clicked "Block")
+          console.warn('⚠️ Could not get location:', error.message);
+          alert('Could not get your location. Please type it manually.');
+        }
+      );
+    } else {
+      alert('Geolocation is not supported by this browser.');
+    }
+  };
+
   // Simulate route completion after estimated time (optional - can be triggered manually)
   useEffect(() => {
     if (selected && routeStartTimeRef.current && !routeCompleted) {
@@ -353,21 +394,30 @@ export default function RoutePlanner() {
           <div className="relative">
             <label className="text-xs opacity-80">Source</label>
             <div ref={sourceInputRef} className="relative">
-              <input 
-                className="mt-1 w-full rounded-lg bg-transparent border border-white/20 px-3 py-2 outline-none" 
-                value={source} 
-                onChange={(e)=>{
-                  sourceRef.current = e.target.value;
-                  setSource(e.target.value);
-                  setShowSourceSuggestions(true);
-                }}
-                onFocus={() => {
-                  if (sourceSuggestions.length > 0) {
+              <div className="flex gap-2">
+                <input 
+                  className="mt-1 flex-1 rounded-lg bg-transparent border border-white/20 px-3 py-2 outline-none" 
+                  value={source} 
+                  onChange={(e)=>{
+                    sourceRef.current = e.target.value;
+                    setSource(e.target.value);
                     setShowSourceSuggestions(true);
-                  }
-                }}
-                placeholder="Enter source location"
-              />
+                  }}
+                  onFocus={() => {
+                    if (sourceSuggestions.length > 0) {
+                      setShowSourceSuggestions(true);
+                    }
+                  }}
+                  placeholder="Enter source location"
+                />
+                <button
+                  onClick={handleFindMyLocation}
+                  className="mt-1 px-3 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:brightness-110 text-white font-semibold text-sm whitespace-nowrap"
+                  title="Get my current location"
+                >
+                  📍 Find Me
+                </button>
+              </div>
               {showSourceSuggestions && sourceSuggestions.length > 0 && (
                 <div
                   ref={sourceSuggestionsRef}
@@ -510,6 +560,9 @@ export default function RoutePlanner() {
               metadata={r.metadata}
               isARecommended={r.isARecommended}
               index={index}
+              source={source}
+              destination={dest}
+              geometry={r.geometry}
             />
           ))}
         </div>
