@@ -81,7 +81,8 @@ export default function RoutePlanner() {
       if (err.message?.includes('Failed to fetch') || err.message?.includes('Connection refused')) {
         setError('Backend server is not running. Please start the server on port 3001.');
       } else {
-        setError('Failed to fetch safe routes. Please check your connection.');
+        // Use error message from API response if available
+        setError(err.data?.error || err.message || 'Failed to fetch safe routes. Please try again with more specific location names.');
       }
     } finally {
       setLoading(false);

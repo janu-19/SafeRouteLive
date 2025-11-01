@@ -13,7 +13,13 @@ export async function getRouteFromChat(prompt) {
 export async function getSafeRoutes(source, destination, preference = 'Well-lit') {
   const params = new URLSearchParams({ source, destination, preference });
   const res = await fetch(`${API_BASE_URL}/api/getSafeRoutes?${params}`);
-  if (!res.ok) throw new Error('Failed to fetch safe routes');
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    const error = new Error(errorData.error || 'Failed to fetch safe routes');
+    error.response = res;
+    error.data = errorData;
+    throw error;
+  }
   return res.json();
 }
 
