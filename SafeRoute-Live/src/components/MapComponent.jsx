@@ -4,7 +4,7 @@ import { io } from 'socket.io-client';
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN || '';
 
-export default function MapComponent({ routes = [], selectedRoute = null, accidents = [], source = '', destination = '', onCurrentLocationAsSource = null, n8nAlerts = [], selectedAlertId = null, onAlertFocus = null, userLocation = null, onMapReady = null }) {
+export default function MapComponent({ routes = [], selectedRoute = null, accidents = [], safeZones = [], source = '', destination = '', onCurrentLocationAsSource = null, n8nAlerts = [], selectedAlertId = null, onAlertFocus = null, userLocation = null, onMapReady = null, predictiveAlert = null }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const routeLayersRef = useRef(new Map());
@@ -13,10 +13,12 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
   const heatLayerIdRef = useRef('heat-layer');
   const accidentsLayerRef = useRef('accidents-layer');
   const accidentsSourceRef = useRef('accidents-source');
+  const safeZoneMarkersRef = useRef(new Map()); // Store safe zone marker references
   const n8nAlertsLayerRef = useRef('n8n-alerts-layer');
   const n8nAlertsSourceRef = useRef('n8n-alerts-source');
   const n8nAlertMarkersRef = useRef(new Map()); // Store marker references
   const n8nAlertCoordinatesRef = useRef(new Map()); // Store coordinates for each alert
+  const predictiveAlertMarkerRef = useRef(null); // Store predictive alert marker
   const startMarkerRef = useRef(null);
   const endMarkerRef = useRef(null);
   const currentLocationMarkerRef = useRef(null);
@@ -221,6 +223,64 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
       }
     });
 
+    // Suppress Mapbox internal warnings (missing images, expression evaluation errors)
+    map.on('styleimagemissing', (e) => {
+      // Silently ignore missing internal Mapbox style images
+      if (e.id && (e.id.includes('in-state') || e.id.includes('directions') || e.id.includes('mapbox-directions'))) {
+        return; // Silently ignore
+      }
+    });
+
+    // Suppress Mapbox expression evaluation warnings (internal style warnings)
+    // These are harmless warnings about null properties in Mapbox style expressions
+    const originalError = console.error;
+    const originalWarn = console.warn;
+    
+    // Override console.error to filter Mapbox internal warnings
+    console.error = (...args) => {
+      const errorStr = args.join(' ');
+      // Filter out Mapbox expression evaluation warnings
+      if ((errorStr.includes('Failed to evaluate expression') || 
+           errorStr.includes('evaluate expression')) && 
+          (errorStr.includes('evaluated to null') || 
+           errorStr.includes('The expression') ||
+           errorStr.includes('was expected to be of type')) &&
+          (errorStr.includes('["get","layer"]') || 
+           errorStr.includes('bridge') ||
+           errorStr.includes('structure') ||
+           errorStr.includes('motorway'))) {
+        // Silently ignore Mapbox internal style expression warnings
+        return;
+      }
+      // Log other errors normally
+      originalError.apply(console, args);
+    };
+    
+    // Override console.warn to filter Mapbox internal warnings
+    console.warn = (...args) => {
+      const warnStr = args.join(' ');
+      // Filter out Mapbox image loading warnings
+      if ((warnStr.includes('Image') && 
+           (warnStr.includes('could not be loaded') || warnStr.includes('Please make sure you have added the image')) &&
+           (warnStr.includes('in-state') || warnStr.includes('directions') || warnStr.includes('mapbox'))) ||
+          // Filter style diff warnings
+          (warnStr.includes('Unable to perform style diff') && 
+           (warnStr.includes('setSprite') || warnStr.includes('Rebuilding'))) ||
+          // Filter any Mapbox style-related warnings
+          (warnStr.includes('style') && warnStr.includes('mapbox'))) {
+        // Silently ignore Mapbox internal warnings
+        return;
+      }
+      // Log other warnings normally
+      originalWarn.apply(console, args);
+    };
+    
+    // Restore original console methods when component unmounts
+    const cleanupConsole = () => {
+      console.error = originalError;
+      console.warn = originalWarn;
+    };
+
     // Re-enhance labels when style changes
     map.on('style.load', () => {
       // Delay to ensure style is fully loaded
@@ -265,6 +325,9 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
     }
 
     return () => {
+      // Restore original console methods
+      cleanupConsole();
+      
       socket?.close();
       map.remove();
       mapInstanceRef.current = null;
@@ -288,8 +351,17 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
       routeSourcesRef.current.delete(routeId);
     });
 
-    // Add new routes
+    // Don't draw any routes if routes array is empty
+    if (!routes || routes.length === 0) {
+      return;
+    }
+
+    // Add new routes (only if they have valid geometry)
     routes.forEach((route) => {
+      // Skip routes without valid geometry
+      if (!route.geometry || !route.geometry.coordinates || route.geometry.coordinates.length < 2) {
+        return;
+      }
       const routeId = route.id || `route-${Date.now()}-${Math.random()}`;
       const sourceId = `route-source-${routeId}`;
       const layerId = `route-layer-${routeId}`;
@@ -393,12 +465,12 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
     const accidentsGeoJSON = {
       type: 'FeatureCollection',
       features: accidents.map(accident => ({
-        type: 'Feature',
+          type: 'Feature',
         properties: { severity: accident.severity },
-        geometry: {
-          type: 'Point',
-          coordinates: [accident.lng, accident.lat]
-        }
+          geometry: {
+            type: 'Point',
+            coordinates: [accident.lng, accident.lat]
+          }
       }))
     };
 
@@ -407,6 +479,87 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
       source.setData(accidentsGeoJSON);
     }
   }, [accidents]);
+
+  // Update safe zone markers
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !map.isStyleLoaded?.()) return;
+
+    // Remove existing safe zone markers
+    safeZoneMarkersRef.current.forEach((marker) => {
+      marker.remove();
+    });
+    safeZoneMarkersRef.current.clear();
+
+    // Add new safe zone markers
+    safeZones.forEach((place) => {
+      // Create custom HTML element for marker with icon emoji
+      const el = document.createElement('div');
+      el.className = 'safe-zone-marker';
+      el.style.width = '40px';
+      el.style.height = '40px';
+      el.style.borderRadius = '50%';
+      el.style.backgroundColor = 'white';
+      el.style.border = '3px solid #3b82f6';
+      el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.3)';
+      el.style.display = 'flex';
+      el.style.alignItems = 'center';
+      el.style.justifyContent = 'center';
+      el.style.fontSize = '24px';
+      el.style.cursor = 'pointer';
+      el.innerHTML = place.icon || '📍';
+      
+      // Create marker
+      const marker = new mapboxgl.Marker(el)
+        .setLngLat([place.lng, place.lat])
+        .addTo(map);
+
+      // Create popup with place details and navigation link
+      const popupContent = document.createElement('div');
+      popupContent.className = 'p-3';
+      popupContent.innerHTML = `
+        <div class="space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="text-2xl">${place.icon || '📍'}</span>
+            <div>
+              <h3 class="font-semibold text-gray-900 text-sm">${place.name}</h3>
+              <p class="text-xs text-gray-600">${place.typeLabel || place.type}</p>
+            </div>
+          </div>
+          <div class="text-xs text-gray-500 space-y-1">
+            ${place.address ? `<p>📍 ${place.address}</p>` : ''}
+            <p>📏 Distance: ${place.distance}</p>
+            ${place.rating ? `<p>⭐ Rating: ${place.rating}/5</p>` : ''}
+          </div>
+          <a 
+            href="https://www.google.com/maps/dir/?api=1&destination=${place.lat},${place.lng}" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            class="block w-full mt-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg text-center transition-colors"
+          >
+            Get Directions →
+          </a>
+        </div>
+      `;
+
+      const popup = new mapboxgl.Popup({ offset: 25, closeButton: true })
+        .setDOMContent(popupContent);
+
+      // Add click event to marker to show popup
+      marker.setPopup(popup);
+
+      // Store marker reference
+      safeZoneMarkersRef.current.set(place.id, marker);
+    });
+
+    return () => {
+      // Cleanup: remove markers when component unmounts or safeZones changes
+      safeZoneMarkersRef.current.forEach((marker) => {
+        marker.remove();
+      });
+      safeZoneMarkersRef.current.clear();
+    };
+  }, [safeZones]);
 
   // Update n8n alert markers on map
   useEffect(() => {
@@ -550,6 +703,105 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
       n8nAlertCoordinatesRef.current.clear();
     };
   }, [n8nAlerts]);
+
+  // Update predictive alert marker (pulsating yellow warning)
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !map.isStyleLoaded?.()) return;
+
+    // Remove existing predictive alert marker
+    if (predictiveAlertMarkerRef.current) {
+      predictiveAlertMarkerRef.current.remove();
+      predictiveAlertMarkerRef.current = null;
+    }
+
+    // Add new predictive alert marker if alert exists
+    if (predictiveAlert && predictiveAlert.lat && predictiveAlert.lng) {
+      // Create pulsating yellow warning marker
+      const el = document.createElement('div');
+      el.className = 'predictive-alert-marker';
+      el.style.width = '48px';
+      el.style.height = '48px';
+      el.style.borderRadius = '50%';
+      el.style.backgroundColor = '#fbbf24';
+      el.style.border = '4px solid #fcd34d';
+      el.style.boxShadow = '0 0 0 0 rgba(251, 191, 36, 1)';
+      el.style.display = 'flex';
+      el.style.alignItems = 'center';
+      el.style.justifyContent = 'center';
+      el.style.fontSize = '28px';
+      el.style.cursor = 'pointer';
+      el.style.position = 'relative';
+      el.innerHTML = '🔮';
+      
+      // Add pulsating animation
+      el.style.animation = 'pulse 2s infinite';
+      
+      // Add CSS animation if not already added
+      if (!document.getElementById('predictive-alert-animation')) {
+        const style = document.createElement('style');
+        style.id = 'predictive-alert-animation';
+        style.textContent = `
+          @keyframes pulse {
+            0% {
+              box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.7);
+            }
+            70% {
+              box-shadow: 0 0 0 20px rgba(251, 191, 36, 0);
+            }
+            100% {
+              box-shadow: 0 0 0 0 rgba(251, 191, 36, 0);
+            }
+          }
+        `;
+        document.head.appendChild(style);
+      }
+
+      // Create popup content
+      const popupContent = `
+        <div style="padding: 12px; max-width: 250px;">
+          <div style="font-weight: bold; margin-bottom: 6px; font-size: 16px; color: #fbbf24;">
+            🔮 AI PREDICTIVE ALERT
+          </div>
+          <div style="font-size: 13px; color: #666; margin-bottom: 8px;">
+            ${predictiveAlert.area || 'Predicted Danger Zone'}
+          </div>
+          <div style="font-size: 12px; color: #333;">
+            ${predictiveAlert.message || 'High probability of safety incident within next 15 minutes'}
+          </div>
+        </div>
+      `;
+
+      const marker = new mapboxgl.Marker(el)
+        .setLngLat([predictiveAlert.lng, predictiveAlert.lat])
+        .setPopup(new mapboxgl.Popup({ offset: 25, maxWidth: '280px' })
+          .setHTML(popupContent))
+        .addTo(map);
+
+      // Store marker reference
+      predictiveAlertMarkerRef.current = marker;
+
+      // Auto-open popup when marker is added
+      setTimeout(() => {
+        marker.togglePopup();
+      }, 500);
+
+      // Fly to the alert location
+      map.flyTo({
+        center: [predictiveAlert.lng, predictiveAlert.lat],
+        zoom: 14,
+        duration: 2000
+      });
+    }
+
+    // Cleanup
+    return () => {
+      if (predictiveAlertMarkerRef.current) {
+        predictiveAlertMarkerRef.current.remove();
+        predictiveAlertMarkerRef.current = null;
+      }
+    };
+  }, [predictiveAlert]);
 
   // Handle selected alert - fly to location and open popup
   useEffect(() => {

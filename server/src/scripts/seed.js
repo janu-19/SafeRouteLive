@@ -26,6 +26,11 @@ async function seed() {
     // Create demo users
     const users = [
       {
+        name: 'Test User',
+        email: 'test@saferoute.com',
+        password: 'test123'
+      },
+      {
         name: 'Alice Johnson',
         email: 'alice@example.com',
         phone: '+1234567890',
@@ -55,11 +60,20 @@ async function seed() {
         // Hash password
         const hashedPassword = await bcrypt.hash(userData.password, 10);
         
-        // Create user
-        user = new User({
-          ...userData,
-          password: hashedPassword
-        });
+        // Create user - don't include phone if not provided
+        const userObj = {
+          name: userData.name,
+          email: userData.email,
+          password: hashedPassword,
+          authMethod: 'email'
+        };
+        
+        // Only add phone if provided
+        if (userData.phone && userData.phone.trim()) {
+          userObj.phone = userData.phone.trim();
+        }
+        
+        user = new User(userObj);
         
         await user.save();
         console.log(`✅ Created user: ${user.name} (${user.email})`);

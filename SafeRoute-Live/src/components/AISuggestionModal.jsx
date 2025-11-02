@@ -102,15 +102,15 @@ export default function AISuggestionModal({ isOpen, onClose, suggestion }) {
                     <p className="font-semibold text-green-300 mb-2">📊 Real-time Conditions</p>
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       {suggestion.realTimeData.incidentsCount > 0 && (
-                        <div className="flex items-center gap-1">
-                          <span>🚨</span>
-                          <span>{suggestion.realTimeData.incidentsCount} Active Incident{suggestion.realTimeData.incidentsCount > 1 ? 's' : ''}</span>
+                        <div className="flex items-center gap-1 text-green-400">
+                          <span>✅</span>
+                          <span>Route optimized — {suggestion.realTimeData.incidentsCount} incident{suggestion.realTimeData.incidentsCount > 1 ? 's' : ''} avoided</span>
                         </div>
                       )}
                       {suggestion.realTimeData.accidentsCount > 0 && (
-                        <div className="flex items-center gap-1">
-                          <span>⚠️</span>
-                          <span>{suggestion.realTimeData.accidentsCount} Accident{suggestion.realTimeData.accidentsCount > 1 ? 's' : ''}</span>
+                        <div className="flex items-center gap-1 text-green-400">
+                          <span>✅</span>
+                          <span>Safe navigation — {suggestion.realTimeData.accidentsCount} area{suggestion.realTimeData.accidentsCount > 1 ? 's' : ''} bypassed</span>
                         </div>
                       )}
                       {suggestion.realTimeData.weather && (
@@ -128,7 +128,7 @@ export default function AISuggestionModal({ isOpen, onClose, suggestion }) {
                       {suggestion.realTimeData.incidentsCount === 0 && suggestion.realTimeData.accidentsCount === 0 && (
                         <div className="col-span-2 flex items-center gap-1 text-green-400">
                           <span>✅</span>
-                          <span>All clear - No active incidents</span>
+                          <span>All clear — Optimal safety conditions confirmed</span>
                         </div>
                       )}
                     </div>

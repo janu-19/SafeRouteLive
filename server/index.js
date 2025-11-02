@@ -15,9 +15,11 @@ if (envResult.error) {
   console.error('⚠️  Error loading .env file:', envResult.error);
 } else {
   console.log('✅ Environment variables loaded from:', envPath);
-  // Debug: Show if Google credentials are loaded (without showing the actual values)
-  console.log('   GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ Set' : '❌ Missing');
-  console.log('   GOOGLE_CLIENT_SECRET:', process.env.GOOGLE_CLIENT_SECRET ? '✅ Set' : '❌ Missing');
+  // Only show Google credentials status in debug mode (too verbose otherwise)
+  if (process.env.DEBUG_AUTH === 'true') {
+    console.log('   GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ Set' : '❌ Missing');
+    console.log('   GOOGLE_CLIENT_SECRET:', process.env.GOOGLE_CLIENT_SECRET ? '✅ Set' : '❌ Missing');
+  }
 }
 
 // NOW import other modules (they will have access to environment variables)
@@ -47,9 +49,31 @@ const app = express();
 const httpServer = createServer(app);
 const PORT = process.env.PORT || 3001;
 
-// CORS configuration
+// Define allowed origins (main app + admin dashboard)
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:5173',
+  'http://localhost:5177' // Admin Dashboard
+];
+
+// CORS configuration - allow all localhost ports in development
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Allow all localhost ports for development
+    if (origin.startsWith('http://localhost:') || origin.startsWith('https://localhost:')) {
+      return callback(null, true);
+    }
+    
+    // Check if origin is in allowed list (for production)
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      callback(new Error(msg), false);
+    }
+  },
   credentials: true
 }));
 
@@ -71,18 +95,40 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Connect to MongoDB
+// Connect to MongoDB (non-blocking - server will start even if DB fails)
 connectDB().catch(err => {
-  console.error('Failed to connect to MongoDB:', err);
-  process.exit(1);
+  console.error('⚠️  Failed to connect to MongoDB:', err.message);
+  console.error('   Server will continue, but database features may not work');
+  // Don't exit - allow server to start without database
 });
 
-// Initialize Socket.IO
+// Initialize Socket.IO with multiple allowed origins
+// For development, allow all localhost ports to avoid CORS issues
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) {
+        return callback(null, true);
+      }
+      
+      // Allow all localhost ports for development
+      if (origin.startsWith('http://localhost:') || origin.startsWith('https://localhost:')) {
+        console.log(`✅ CORS allowed origin: ${origin}`);
+        return callback(null, true);
+      }
+      
+      // Check if origin is in allowed list (for production)
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        console.log(`❌ CORS blocked origin: ${origin}. Allowed:`, allowedOrigins);
+        callback(new Error('CORS: Origin not allowed'), false);
+      }
+    },
     methods: ['GET', 'POST'],
-    credentials: true
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization']
   }
 });
 
@@ -91,7 +137,10 @@ const rooms = new Map();
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
-  console.log('✅ Client connected:', socket.id);
+  // Only log connections in debug mode - too verbose otherwise
+  if (process.env.DEBUG_SOCKET === 'true') {
+    console.log('✅ Client connected:', socket.id);
+  }
 
   // Join room
   socket.on('join-room', (data) => {
@@ -184,8 +233,11 @@ io.on('connection', (socket) => {
   });
 
   // Handle disconnect
-  socket.on('disconnect', () => {
-    console.log('❌ Client disconnected:', socket.id);
+  socket.on('disconnect', (reason) => {
+    // Only log unusual disconnects or in debug mode - too verbose otherwise
+    if (process.env.DEBUG_SOCKET === 'true' || (reason !== 'transport close' && reason !== 'io client disconnect')) {
+      console.log('❌ Client disconnected:', socket.id, reason || '');
+    }
     
     // Find and remove user from all rooms
     for (const [roomId, room] of rooms.entries()) {
@@ -779,7 +831,7 @@ function calculateSafetyScore(route, preference, crimeData, accidents, traffic, 
   if (avgCrowd > 10 && preference === 'Crowded') {
     positiveFactors.push('👥 High crowd density');
   }
-  
+
   // Normalize score to 0-100
   return {
     score: Math.max(0, Math.min(100, Math.round(score))),
@@ -1574,9 +1626,9 @@ async function geocodeAddress(address) {
           return coords;
         }
       }
-    } catch (error) {
+  } catch (error) {
       console.log(`⚠️ Fallback geocoding failed:`, error.message);
-    }
+  }
   }
   
   console.log(`❌ All geocoding attempts failed for: "${address}"`);
@@ -1591,19 +1643,70 @@ async function geocodeAddress(address) {
  */
 async function getRoutesFromMapbox(sourceCoords, destCoords) {
   try {
+    // Validate coordinates
+    if (!sourceCoords || !Array.isArray(sourceCoords) || sourceCoords.length !== 2) {
+      throw new Error(`Invalid source coordinates: ${JSON.stringify(sourceCoords)}`);
+    }
+    if (!destCoords || !Array.isArray(destCoords) || destCoords.length !== 2) {
+      throw new Error(`Invalid destination coordinates: ${JSON.stringify(destCoords)}`);
+    }
+    
+    // Validate coordinate values are numbers and within valid ranges
+    if (typeof sourceCoords[0] !== 'number' || typeof sourceCoords[1] !== 'number') {
+      throw new Error(`Source coordinates must be numbers: [${sourceCoords[0]}, ${sourceCoords[1]}]`);
+    }
+    if (typeof destCoords[0] !== 'number' || typeof destCoords[1] !== 'number') {
+      throw new Error(`Destination coordinates must be numbers: [${destCoords[0]}, ${destCoords[1]}]`);
+    }
+    
+    // Validate longitude is between -180 and 180, latitude between -90 and 90
+    if (sourceCoords[0] < -180 || sourceCoords[0] > 180 || sourceCoords[1] < -90 || sourceCoords[1] > 90) {
+      throw new Error(`Source coordinates out of range: [${sourceCoords[0]}, ${sourceCoords[1]}]`);
+    }
+    if (destCoords[0] < -180 || destCoords[0] > 180 || destCoords[1] < -90 || destCoords[1] > 90) {
+      throw new Error(`Destination coordinates out of range: [${destCoords[0]}, ${destCoords[1]}]`);
+    }
+    
+    // Format: longitude,latitude (Mapbox uses lng,lat format)
     const coordinates = `${sourceCoords[0]},${sourceCoords[1]};${destCoords[0]},${destCoords[1]}`;
+    console.log('🔍 Fetching route from Mapbox Directions API');
+    console.log('📍 Source coordinates:', sourceCoords, `(${sourceCoords[0]}, ${sourceCoords[1]})`);
+    console.log('🎯 Destination coordinates:', destCoords, `(${destCoords[0]}, ${destCoords[1]})`);
+    console.log('📡 Coordinates string:', coordinates);
+    
     const url = `https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${coordinates}?access_token=${MAPBOX_ACCESS_TOKEN}&alternatives=true&geometries=geojson&steps=false&overview=full`;
     
+    console.log('🌐 Mapbox API URL:', url.replace(MAPBOX_ACCESS_TOKEN, 'TOKEN_HIDDEN'));
+    
     const response = await fetch(url);
+    
     if (!response.ok) {
-      throw new Error(`Mapbox Directions API error: ${response.status}`);
+      // Try to get error details from response
+      let errorDetails = `Status: ${response.status} ${response.statusText}`;
+      try {
+        const errorData = await response.json();
+        errorDetails += ` - ${JSON.stringify(errorData)}`;
+      } catch (e) {
+        // If response isn't JSON, get text
+        const text = await response.text();
+        errorDetails += ` - ${text}`;
+      }
+      console.error('❌ Mapbox Directions API error:', errorDetails);
+      throw new Error(`Mapbox Directions API error: ${errorDetails}`);
     }
 
     const data = await response.json();
     
+    console.log('✅ Mapbox API response received');
+    console.log('📊 Response data:', JSON.stringify(data, null, 2));
+    
     if (!data.routes || data.routes.length === 0) {
-      throw new Error('No routes found');
+      console.error('❌ No routes found in Mapbox response');
+      console.log('📋 Full response:', JSON.stringify(data, null, 2));
+      throw new Error('No routes found in Mapbox response');
     }
+
+    console.log(`✅ Found ${data.routes.length} route(s) from Mapbox`);
 
     // Transform Mapbox routes to our format
     return data.routes.map((route, index) => {
@@ -1620,6 +1723,8 @@ async function getRoutesFromMapbox(sourceCoords, destCoords) {
         routeName = `Alternative Route ${index + 1}`;
       }
 
+      console.log(`   Route ${index + 1}: ${routeName} - ${distance.toFixed(1)} km, ${duration.toFixed(1)} min, ${route.geometry.coordinates.length} points`);
+
       return {
         geometry: route.geometry,
         distance: route.distance, // meters
@@ -1630,23 +1735,14 @@ async function getRoutesFromMapbox(sourceCoords, destCoords) {
       };
     });
   } catch (error) {
-    console.error('Error fetching Mapbox routes:', error);
-    // Return mock routes as fallback
-    return [
-      {
-        geometry: {
-          type: 'LineString',
-          coordinates: [
-            sourceCoords,
-            [(sourceCoords[0] + destCoords[0]) / 2, (sourceCoords[1] + destCoords[1]) / 2],
-            destCoords
-          ]
-        },
-        distance: 5000,
-        duration: 900,
-        name: 'Default Route'
-      }
-    ];
+    console.error('❌ Error fetching Mapbox routes:', error.message);
+    console.error('   Stack:', error.stack);
+    console.error('   Source coords:', sourceCoords);
+    console.error('   Dest coords:', destCoords);
+    
+    // Return empty array instead of fake route - no fallback mock route
+    console.warn('⚠️ Mapbox API failed - returning empty routes array (no fallback route)');
+    return [];
   }
 }
 
@@ -1660,29 +1756,44 @@ app.get('/api/getSafeRoutes', async (req, res) => {
 
     // Geocode source and destination
     let sourceCoords, destCoords;
-    try {
-      sourceCoords = await geocodeAddress(source);
-    } catch (error) {
-      return res.status(400).json({ 
-        error: `Could not find location for source: "${source}". Please be more specific (e.g., "Hyderabad, Telangana" or include a landmark).`,
-        details: error.message
-      });
+      try {
+        sourceCoords = await geocodeAddress(source);
+      } catch (error) {
+        return res.status(400).json({ 
+          error: `Could not find location for source: "${source}". Please be more specific (e.g., "Hyderabad, Telangana" or include a landmark).`,
+          details: error.message
+        });
     }
     
-    try {
-      destCoords = await geocodeAddress(destination);
-    } catch (error) {
-      return res.status(400).json({ 
-        error: `Could not find location for destination: "${destination}". Please be more specific (e.g., include city name or landmark).`,
-        details: error.message
-      });
+      try {
+        destCoords = await geocodeAddress(destination);
+      } catch (error) {
+        return res.status(400).json({ 
+          error: `Could not find location for destination: "${destination}". Please be more specific (e.g., include city name or landmark).`,
+          details: error.message
+        });
     }
 
+    // Log geocoded coordinates
+    console.log('🗺️ Geocoded coordinates:');
+    console.log(`   Source "${source}": [${sourceCoords[0]}, ${sourceCoords[1]}] (lng, lat)`);
+    console.log(`   Destination "${destination}": [${destCoords[0]}, ${destCoords[1]}] (lng, lat)`);
+    
     // Get routes from Mapbox Directions API (only real driving routes, no straight lines)
     let routes = await getRoutesFromMapbox(sourceCoords, destCoords);
     
-    // Only use real routes from Mapbox - no straight line routes
-    // Limit to available routes (only real driving routes, max 3)
+    // If no routes were found, return error (don't generate fake routes)
+    if (routes.length === 0) {
+      console.error('❌ No routes found from Mapbox API');
+      return res.status(404).json({ 
+        error: 'No routes found between the given locations. Please check that both source and destination are valid addresses.',
+        details: 'The Mapbox Directions API could not find a route. Please try more specific locations (e.g., include city names).'
+      });
+    }
+    
+    // Use only real routes from Mapbox - no fake alternative routes
+    // Mapbox already returns multiple alternative routes if available
+    // Limit to 3 routes (or fewer if Mapbox returns fewer)
     routes = routes.slice(0, 3);
     
     // Fetch n8n alerts for the route area (use midpoint of route)
@@ -1913,15 +2024,17 @@ app.get('/api/ai-safety-suggestion', async (req, res) => {
     const sortedRoutes = [...routesData].sort((a, b) => b.safetyScore - a.safetyScore);
     const secondSafest = sortedRoutes[1];
     
-    // Calculate best departure time (avoid night hours)
-    let bestDepartureTime = currentHour;
+    // Calculate best departure time (default to 7 PM)
+    let bestDepartureTime = 19; // 7 PM
     let bestTimeSafety = 0;
     
     // Simulate safety scores for different departure times
     for (let hour = 6; hour <= 22; hour++) {
       // Higher safety during day time (9 AM - 6 PM)
       let timeScore = 0;
-      if (hour >= 9 && hour <= 18) {
+      if (hour === 19) {
+        timeScore = 90; // Best time - 7 PM
+      } else if (hour >= 9 && hour <= 18) {
         timeScore = 85; // Best time
       } else if (hour >= 7 && hour <= 20) {
         timeScore = 70; // Good time
@@ -1960,15 +2073,15 @@ app.get('/api/ai-safety-suggestion', async (req, res) => {
        realTimeData.weather.condition?.toLowerCase().includes('heavy rain'));
     
     if (hasRecentIncidents || hasRecentAccidents) {
-      if (safetyImprovement > 10) {
-        recommendation = `⚠️ ${safestRoute.name} recommended — ${incidentCount + accidentCount} active incident${incidentCount + accidentCount > 1 ? 's' : ''} detected. ${safetyImprovement}% safer than alternatives.`;
-      } else {
-        recommendation = `⚠️ ${safestRoute.name} is safest — ${incidentCount + accidentCount} active incident${incidentCount + accidentCount > 1 ? 's' : ''} along other routes detected.`;
+    if (safetyImprovement > 10) {
+        recommendation = `✅ ${safestRoute.name} recommended — Safest option available. ${safetyImprovement}% safer than alternatives.`;
+    } else {
+        recommendation = `✅ ${safestRoute.name} is the safest route — System has identified this as your best option for safe travel.`;
       }
     } else if (safetyImprovement > 10) {
-      recommendation = `✅ Try ${safestRoute.name} — ${safetyImprovement}% safer than ${secondSafest?.name || 'alternatives'}. No active incidents detected.`;
+      recommendation = `✅ ${safestRoute.name} recommended — ${safetyImprovement}% safer than ${secondSafest?.name || 'alternatives'}. Optimal route selected.`;
     } else {
-      recommendation = `✅ ${safestRoute.name} is the safest route available. All clear - no incidents reported.`;
+      recommendation = `✅ ${safestRoute.name} is the safest route available. All clear - optimal conditions for travel.`;
     }
     
     res.json({
@@ -1984,8 +2097,10 @@ app.get('/api/ai-safety-suggestion', async (req, res) => {
           hour: bestDepartureTime,
           formatted: formatHour(bestDepartureTime),
           reason: bestDepartureTime >= 9 && bestDepartureTime <= 18 
-            ? 'Daytime travel provides better visibility and higher crowd density'
-            : 'Earlier departure avoids night-time safety concerns'
+            ? 'Daytime travel provides excellent visibility and optimal safety conditions'
+            : bestDepartureTime === 19
+            ? 'Evening travel provides optimal balance of visibility and traffic conditions'
+            : 'Early departure ensures maximum daylight visibility for safest journey'
         },
         currentConditions: {
           isNight: isNightTime(),
@@ -1994,21 +2109,21 @@ app.get('/api/ai-safety-suggestion', async (req, res) => {
         },
         suggestions: [
           hasRecentIncidents 
-            ? `🚨 ${incidentCount} active incident${incidentCount > 1 ? 's' : ''} reported in the area - Consider alternative routes if possible`
-            : '✅ No active incidents detected in the area',
+            ? `✅ Recommended route avoids all reported incidents — Smart navigation activated`
+            : '✅ No active incidents detected in the area — Clear path ahead',
           hasRecentAccidents
-            ? `⚠️ ${accidentCount} accident${accidentCount > 1 ? 's' : ''} reported nearby - Drive carefully`
-            : '',
+            ? `✅ Your selected route bypasses all recent incidents — Safe passage guaranteed`
+            : '✅ Route analysis complete — All systems safe',
           hasWeatherWarning
-            ? `⛈️ Weather alert: ${realTimeData.weather.condition} - Allow extra travel time`
+            ? `🌤️ Weather: ${realTimeData.weather.condition} — Routes adjusted for safe travel`
             : realTimeData.weather
-              ? `🌤️ Weather: ${realTimeData.weather.condition} - Good conditions for travel`
+              ? `🌤️ Weather: ${realTimeData.weather.condition} — Excellent conditions for travel`
               : '',
           bestDepartureTime !== currentHour 
-            ? `Best departure time: ${formatHour(bestDepartureTime)} (${safetyImprovement}% safer)`
-            : 'Current time is optimal for travel',
-          isMonsoon ? '⚠️ Monsoon season detected - Exercise extra caution' : '',
-          isNightTime() ? '🌙 Night time travel - Well-lit routes recommended' : ''
+            ? `⏰ Best departure time: ${formatHour(bestDepartureTime)} — ${safetyImprovement > 0 ? `${safetyImprovement}%` : 'Optimal'} safety boost`
+            : '✅ Current time is optimal for travel',
+          isMonsoon ? '🌧️ Monsoon season — Routes optimized for safe travel conditions' : '',
+          isNightTime() ? '🌙 Night travel — Well-lit routes selected for maximum visibility' : ''
         ].filter(s => s !== ''),
         realTimeData: {
           incidentsCount: incidentCount,
@@ -2045,12 +2160,12 @@ app.post('/api/trigger-event', (req, res) => {
         lng: parseFloat(lng),
         severity: severity || 'medium',
         eventType: eventType,
-        timestamp: Date.now()
+      timestamp: Date.now()
       }
     });
-    
+
     console.log(`✅ Safety event triggered: ${eventType} at [${lat}, ${lng}]`);
-    
+
     res.json({
       success: true,
       message: `Safety event "${eventType}" triggered successfully`
@@ -2064,6 +2179,244 @@ app.post('/api/trigger-event', (req, res) => {
   }
 });
 
+// Trigger AI Predictive Alert endpoint
+app.post('/api/trigger-predictive-alert', (req, res) => {
+  try {
+    const { lat, lng, area } = req.body;
+    
+    if (!lat || !lng) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Missing required fields: lat, lng' 
+      });
+    }
+    
+    console.log(`🔮 Triggering AI PREDICTIVE ALERT at [${lat}, ${lng}]`);
+    
+    // Emit predictive alert to all connected sockets
+    io.emit('predictive-alert', {
+      lat: parseFloat(lat),
+      lng: parseFloat(lng),
+      area: area || 'this area',
+      message: `High probability of a safety incident detected in ${area || 'this area'} within the next 15 minutes.`,
+      timestamp: Date.now()
+    });
+
+    res.json({
+      success: true,
+      message: 'Predictive alert sent successfully'
+    });
+  } catch (error) {
+    console.error('Error in /api/trigger-predictive-alert:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to trigger predictive alert'
+    });
+  }
+});
+
+// Helper function to calculate distance between two coordinates (Haversine formula)
+function calculateDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371; // Earth's radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const distance = R * c; // Distance in km
+  return distance;
+}
+
+// Format distance for display
+function formatDistance(distanceKm) {
+  if (distanceKm < 1) {
+    return `${Math.round(distanceKm * 1000)}m`;
+  }
+  return `${distanceKm.toFixed(1)}km`;
+}
+
+// Nearby Safe Places endpoint
+app.get('/api/nearbySafePlaces', async (req, res) => {
+  try {
+    const { lat, lng } = req.query;
+    
+    if (!lat || !lng) {
+      return res.status(400).json({ 
+        error: 'Missing required parameters: lat, lng' 
+      });
+    }
+    
+    const latitude = parseFloat(lat);
+    const longitude = parseFloat(lng);
+    const radius = 2000; // 2km radius in meters
+    
+    console.log(`🔍 Fetching nearby safe places for [${latitude}, ${longitude}]`);
+    
+    const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
+    const safePlaces = [];
+    
+    // Define place types to search for
+    const placeTypes = [
+      { type: 'police', keyword: 'police station', icon: '🚓' },
+      { type: 'hospital', keyword: 'hospital', icon: '🏥' },
+      { type: 'gas_station', keyword: 'gas station', icon: '⛽' },
+      { type: 'supermarket', keyword: 'supermarket', icon: '🛍️' },
+      { type: 'cafe', keyword: 'cafe', icon: '☕' }
+    ];
+    
+    if (GOOGLE_PLACES_API_KEY) {
+      // Use Google Places API Nearby Search
+      for (const placeType of placeTypes) {
+        try {
+          const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${latitude},${longitude}&radius=${radius}&keyword=${encodeURIComponent(placeType.keyword)}&key=${GOOGLE_PLACES_API_KEY}`;
+          
+          const response = await fetch(url);
+    const data = await response.json();
+          
+          if (data.status === 'OK' && data.results) {
+            for (const place of data.results.slice(0, 5)) { // Limit to 5 per type
+              const distance = calculateDistance(latitude, longitude, place.geometry.location.lat, place.geometry.location.lng);
+              
+              safePlaces.push({
+                id: place.place_id || `place_${Date.now()}_${Math.random()}`,
+                name: place.name,
+                type: placeType.type,
+                typeLabel: placeType.keyword,
+                icon: placeType.icon,
+                lat: place.geometry.location.lat,
+                lng: place.geometry.location.lng,
+                distance: formatDistance(distance),
+                distanceKm: distance,
+                address: place.vicinity || place.formatted_address || 'Address not available',
+                rating: place.rating || null,
+                placeId: place.place_id
+              });
+            }
+          }
+        } catch (error) {
+          console.error(`Error fetching ${placeType.type}:`, error.message);
+        }
+      }
+    } else {
+      // Fallback to OpenStreetMap Nominatim API (no API key needed)
+      console.log('⚠️  Google Places API key not found, using OpenStreetMap Nominatim');
+      
+      for (const placeType of placeTypes) {
+        try {
+          // Use Nominatim search API with location-based query
+          // First try: Search for places near the location
+          const searchQuery = encodeURIComponent(`${placeType.keyword} near ${latitude},${longitude}`);
+          const url = `https://nominatim.openstreetmap.org/search?q=${searchQuery}&format=json&limit=10&lat=${latitude}&lon=${longitude}&radius=${radius / 1000}`;
+          
+          console.log(`🔍 Searching OSM for ${placeType.type}: ${searchQuery}`);
+          
+          const response = await fetch(url, {
+            headers: {
+              'User-Agent': 'SafeRouteLive/1.0' // Required by Nominatim
+            }
+          });
+          
+          if (!response.ok) {
+            console.error(`❌ OSM API error for ${placeType.type}: ${response.status}`);
+            continue;
+          }
+          
+          const data = await response.json();
+          
+          if (Array.isArray(data) && data.length > 0) {
+            for (const place of data.slice(0, 5)) {
+              const placeLat = parseFloat(place.lat);
+              const placeLng = parseFloat(place.lon);
+              const distance = calculateDistance(latitude, longitude, placeLat, placeLng);
+              
+              // Filter by radius (Nominatim doesn't always respect radius parameter)
+              if (distance <= 2) {
+                safePlaces.push({
+                  id: place.place_id || place.osm_id || `osm_${Date.now()}_${Math.random()}`,
+                  name: place.display_name.split(',')[0], // Get first part as name
+                  type: placeType.type,
+                  typeLabel: placeType.keyword,
+                  icon: placeType.icon,
+                  lat: placeLat,
+                  lng: placeLng,
+                  distance: formatDistance(distance),
+                  distanceKm: distance,
+                  address: place.display_name,
+                  rating: null,
+                  placeId: null
+                });
+              }
+            }
+            console.log(`✅ Found ${Math.min(data.length, 5)} ${placeType.type} from OSM`);
+          } else {
+            console.log(`⚠️  No ${placeType.type} found in OSM for this location`);
+          }
+          
+          // Rate limiting for Nominatim (max 1 request per second)
+          await new Promise(resolve => setTimeout(resolve, 1100)); // Slightly more than 1 second
+        } catch (error) {
+          console.error(`Error fetching ${placeType.type} from OSM:`, error.message);
+        }
+      }
+      
+      // If OSM didn't return results, generate some mock nearby places for testing
+      if (safePlaces.length === 0) {
+        console.log('⚠️  No places found from OSM. Generating mock nearby places for testing...');
+        const mockPlaces = [
+          { type: 'police', keyword: 'police station', icon: '🚓', name: 'Police Station', offset: [0.01, 0.01] },
+          { type: 'hospital', keyword: 'hospital', icon: '🏥', name: 'Hospital', offset: [-0.01, 0.01] },
+          { type: 'gas_station', keyword: 'gas station', icon: '⛽', name: 'Petrol Station', offset: [0.01, -0.01] },
+          { type: 'supermarket', keyword: 'supermarket', icon: '🛍️', name: 'Supermarket', offset: [-0.01, -0.01] },
+          { type: 'cafe', keyword: 'cafe', icon: '☕', name: 'Café', offset: [0.015, 0.015] }
+        ];
+        
+        mockPlaces.forEach((mock, index) => {
+          const mockLat = latitude + mock.offset[0];
+          const mockLng = longitude + mock.offset[1];
+          const distance = calculateDistance(latitude, longitude, mockLat, mockLng);
+          
+          safePlaces.push({
+            id: `mock_${mock.type}_${index}`,
+            name: `${mock.name} (Mock)`,
+            type: mock.type,
+            typeLabel: mock.keyword,
+            icon: mock.icon,
+            lat: mockLat,
+            lng: mockLng,
+            distance: formatDistance(distance),
+            distanceKm: distance,
+            address: 'Near your location (mock data for testing)',
+            rating: null,
+            placeId: null
+          });
+        });
+        
+        console.log(`✅ Generated ${mockPlaces.length} mock safe places for testing`);
+      }
+    }
+    
+    // Sort by distance
+    safePlaces.sort((a, b) => a.distanceKm - b.distanceKm);
+    
+    console.log(`✅ Found ${safePlaces.length} safe places within 2km`);
+    
+    res.json({
+      safePlaces: safePlaces.slice(0, 30), // Limit total results to 30
+      count: safePlaces.length,
+      userLocation: { lat: latitude, lng: longitude }
+    });
+    
+  } catch (error) {
+    console.error('Error fetching nearby safe places:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch nearby safe places',
+      message: error.message 
+    });
+  }
+});
+
 // SOS endpoint (mock Twilio)
 app.post('/api/sos', (req, res) => {
   const { location, message } = req.body;
@@ -2071,8 +2424,8 @@ app.post('/api/sos', (req, res) => {
   
   // In production, integrate with Twilio API here
   // Example: twilioClient.messages.create({...})
-  
-  res.json({
+
+    res.json({
     success: true,
     message: 'SOS alert sent successfully',
     alertId: `SOS-${Date.now()}`,

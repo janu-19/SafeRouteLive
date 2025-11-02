@@ -15,14 +15,12 @@ const JWT_SECRET = process.env.JWT_SECRET || 'demo-secret-key-change-in-producti
 router.get('/google', (req, res, next) => {
   // Check if Google strategy is registered
   const availableStrategies = Object.keys(passport._strategies || {});
-  console.log('🔍 Available passport strategies:', availableStrategies);
   
   if (!passport._strategies || !passport._strategies.google) {
-    console.error('❌ Google OAuth strategy not registered!');
-    console.error('   Available strategies:', availableStrategies);
-    console.error('   Environment check:');
-    console.error('     GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? 'Set' : 'Missing');
-    console.error('     GOOGLE_CLIENT_SECRET:', process.env.GOOGLE_CLIENT_SECRET ? 'Set' : 'Missing');
+    // Only log warning in debug mode - this is expected if env vars aren't set
+    if (process.env.DEBUG_AUTH === 'true') {
+      console.warn('⚠️  Google OAuth not configured (expected if GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET not set)');
+    }
     return res.status(500).json({
       error: 'Google OAuth not configured',
       message: 'Please check server configuration and .env file',
@@ -115,31 +113,34 @@ router.post('/register', async (req, res) => {
       });
     }
     
-    // Check if user already exists
-    const existingUser = await User.findOne({
-      $or: [{ email }, { phone: phone || null }]
-    });
+    // Check if user already exists (email only - phone is optional)
+    const existingUser = await User.findOne({ email });
     
     if (existingUser) {
       return res.status(400).json({
         error: 'User already exists',
-        message: existingUser.email === email 
-          ? 'Email already registered' 
-          : 'Phone number already registered'
+        message: 'Email already registered'
       });
     }
     
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    // Create user
-    const user = await User.create({
+    // Create user - don't include phone field if empty to avoid MongoDB index issues
+    const userData = {
       name,
       email,
       password: hashedPassword,
-      phone: phone || undefined,
       authMethod: 'email'
-    });
+    };
+    
+    // Only add phone if provided and not empty
+    if (phone && String(phone).trim()) {
+      userData.phone = String(phone).trim();
+    }
+    
+    // Create user
+    const user = await User.create(userData);
     
     // Generate JWT token
     const token = jwt.sign(
@@ -163,10 +164,10 @@ router.post('/register', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Registration error:', error);
+    console.error('Registration error:', error.message);
     res.status(500).json({
       error: 'Registration failed',
-      message: error.message
+      message: error.message || 'An unexpected error occurred'
     });
   }
 });

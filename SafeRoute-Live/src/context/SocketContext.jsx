@@ -54,18 +54,26 @@ export const SocketProvider = ({ children }) => {
     });
 
     newSocket.on('disconnect', (reason) => {
-      console.log('❌ Socket disconnected:', reason);
+      // Only log disconnects that are unusual, not normal transport closes or connection refused
+      if (reason !== 'transport close' && reason !== 'io server disconnect' && 
+          !reason?.toString().includes('connection refused')) {
+        console.log('❌ Socket disconnected:', reason);
+      }
       setIsConnected(false);
     });
 
     newSocket.on('connect_error', (error) => {
-      console.error('❌ Socket connection error:', error.message || error);
-      if (error.message && error.message.includes('Authentication')) {
+      // Only log authentication errors, not connection refused errors (server not running)
+      const errorMsg = error.message?.toString() || error?.toString() || '';
+      if (errorMsg.includes('Authentication') || errorMsg.includes('Unauthorized')) {
+        console.error('❌ Socket connection error:', error.message || error);
         console.error('🔐 Authentication failed. Please:');
         console.error('1. Check token: localStorage.getItem("token")');
         console.error('2. Set token: localStorage.setItem("token", "<valid-token>")');
         console.error('3. Verify server JWT_SECRET matches token generation secret');
       }
+      // Suppress connection refused/websocket errors when server is not running
+      // These are expected during development when server is not started
       setIsConnected(false);
     });
 

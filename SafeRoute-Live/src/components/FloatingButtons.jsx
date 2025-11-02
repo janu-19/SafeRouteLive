@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Route, Send, ChevronUp, ChevronDown, MessageCircle } from 'lucide-react';
+import { AlertTriangle, Route, Send, ChevronUp, ChevronDown, MessageCircle, LifeBuoy } from 'lucide-react';
 import { sendSOSAlert } from '../utils/api';
 
-export default function FloatingButtons({ onRecalculate, location }) {
+export default function FloatingButtons({ onRecalculate, location, onFindSafeZones, loadingSafeZones = false }) {
   const navigate = useNavigate();
   const [sosLoading, setSosLoading] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
@@ -170,6 +170,43 @@ export default function FloatingButtons({ onRecalculate, location }) {
                         transition-opacity duration-200 pointer-events-none
                         shadow-lg backdrop-blur-sm border border-white/10">
           Share Location
+          <span className="absolute left-full top-1/2 -translate-y-1/2 
+                          border-4 border-transparent border-l-gray-900/95"></span>
+        </span>
+      </button>
+
+      {/* Find Safe Zones Button */}
+      <button
+        onClick={onFindSafeZones}
+        disabled={loadingSafeZones}
+        className="bg-gradient-to-br from-blue-500 to-cyan-500 group relative w-14 h-14 rounded-full flex items-center justify-center 
+                   hover:brightness-110 
+                   active:scale-95 
+                   shadow-lg 
+                   hover:shadow-xl 
+                   border-2 border-white/50 
+                   backdrop-blur-sm 
+                   transition-all duration-200 
+                   hover:scale-105
+                   disabled:opacity-50 disabled:cursor-not-allowed"
+        aria-label="Find Safe Zones"
+        title="Find Safe Zones 🛟"
+      >
+        {loadingSafeZones ? (
+          <div className="animate-spin rounded-full h-5 w-5 border-t-2 border-b-2 border-white"></div>
+        ) : (
+          <LifeBuoy 
+            size={24} 
+            className="text-white drop-shadow-sm" 
+          />
+        )}
+        {/* Tooltip */}
+        <span className="absolute right-full mr-3 px-3 py-1.5 rounded-lg 
+                        bg-gray-900/95 text-white text-xs font-medium 
+                        whitespace-nowrap opacity-0 group-hover:opacity-100 
+                        transition-opacity duration-200 pointer-events-none
+                        shadow-lg backdrop-blur-sm border border-white/10">
+          Find Safe Zones 🛟
           <span className="absolute left-full top-1/2 -translate-y-1/2 
                           border-4 border-transparent border-l-gray-900/95"></span>
         </span>

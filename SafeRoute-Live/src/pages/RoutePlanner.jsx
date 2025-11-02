@@ -3,9 +3,9 @@ import { motion } from 'framer-motion';
 import MapComponent from '../components/MapComponent.jsx';
 import RouteCard from '../components/RouteCard.jsx';
 import FloatingButtons from '../components/FloatingButtons.jsx';
-import FeedbackModal from '../components/FeedbackModal.jsx';
 import AISuggestionModal from '../components/AISuggestionModal.jsx';
-import { getSafeRoutes, getAccidents, getAISafetySuggestion, getAddressSuggestions } from '../utils/api.js';
+import { getSafeRoutes, getAccidents, getAISafetySuggestion, getAddressSuggestions, getNearbySafePlaces } from '../utils/api.js';
+import { useSocket } from '../context/SocketContext.jsx';
 
 export default function RoutePlanner() {
   const [source, setSource] = useState('MG Road, Bengaluru');
@@ -16,7 +16,6 @@ export default function RoutePlanner() {
   const [accidents, setAccidents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [showAISuggestion, setShowAISuggestion] = useState(false);
   const [aiSuggestion, setAISuggestion] = useState(null);
   const [loadingAI, setLoadingAI] = useState(false);
@@ -30,7 +29,13 @@ export default function RoutePlanner() {
   const [destSuggestions, setDestSuggestions] = useState([]);
   const [showSourceSuggestions, setShowSourceSuggestions] = useState(false);
   const [showDestSuggestions, setShowDestSuggestions] = useState(false);
+  const [safeZones, setSafeZones] = useState([]);
+  const [loadingSafeZones, setLoadingSafeZones] = useState(false);
+  const [predictiveAlert, setPredictiveAlert] = useState(null);
   const intervalRef = useRef(null);
+  
+  // Socket for predictive alerts
+  const { socket } = useSocket();
   const lastFetchRef = useRef(null); // Initialize as null, only set after successful search
   const routeStartTimeRef = useRef(null);
   const sourceRef = useRef(source);
@@ -179,6 +184,32 @@ export default function RoutePlanner() {
       setSuggestions([]);
     }
   };
+
+  // Listen for AI Predictive Alert socket events
+  useEffect(() => {
+    if (!socket) return;
+
+    const handlePredictiveAlert = (data) => {
+      console.log('🔮 AI Predictive Alert received:', data);
+      setPredictiveAlert(data);
+      
+      // Auto re-fetch routes to avoid the predicted danger zone
+      // This triggers re-calculation of the safest route around the predicted incident
+      if (routes.length > 0 && selected && sourceRef.current && destRef.current) {
+        console.log('🔄 Re-routing to avoid predicted danger zone...');
+        // Re-fetch routes after a short delay to show the re-routing message
+        setTimeout(() => {
+          fetchSafeRoutes(true);
+        }, 2500);
+      }
+    };
+
+    socket.on('predictive-alert', handlePredictiveAlert);
+
+    return () => {
+      socket.off('predictive-alert', handlePredictiveAlert);
+    };
+  }, [socket, routes, selected]);
 
   // Debounced search for source
   useEffect(() => {
@@ -390,24 +421,154 @@ export default function RoutePlanner() {
     fetchAISuggestion(true); // Show modal when manually clicked
   };
 
+  const handleFindSafeZones = async () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser. Please enable location access.');
+      return;
+    }
+
+    setLoadingSafeZones(true);
+    
+    try {
+      // Check permissions first
+      let permissionStatus = 'prompt';
+      if (navigator.permissions && navigator.permissions.query) {
+        try {
+          const permissionResult = await navigator.permissions.query({ name: 'geolocation' });
+          permissionStatus = permissionResult.state;
+          console.log('📍 Geolocation permission status:', permissionStatus);
+        } catch (permError) {
+          console.log('📍 Could not check permission status:', permError);
+        }
+      }
+
+      // Get user's current location
+      // Use Promise.race to handle the case where success and error both fire
+      // (e.g., from browser extensions interfering)
+      const positionPromise = new Promise((resolve, reject) => {
+        let hasResolved = false;
+        let errorOccurred = false;
+        let successOccurred = false;
+        
+        const successHandler = (pos) => {
+          if (!hasResolved) {
+            successOccurred = true;
+            hasResolved = true;
+            console.log('✅ Location obtained:', pos.coords.latitude, pos.coords.longitude);
+            resolve(pos); // Resolve with success - this takes priority
+          }
+        };
+        
+        const errorHandler = (err) => {
+          // Delay error handling slightly to allow success handler to fire first
+          // If success has already occurred, ignore this error
+          setTimeout(() => {
+            if (!hasResolved && !successOccurred) {
+              errorOccurred = true;
+              // Only log if it's a real error (not from extension interference)
+              if (err.code === 1) {
+                // Permission denied - check if it's really denied or just interference
+                // Wait a bit more to see if success comes through
+                setTimeout(() => {
+                  if (!successOccurred && !hasResolved) {
+                    console.error('❌ Geolocation error details:', {
+                      code: err.code,
+                      message: err.message
+                    });
+                    const error = new Error(err.message || 'Geolocation error');
+                    error.code = err.code;
+                    hasResolved = true;
+                    reject(error);
+                  }
+                }, 500);
+              } else {
+                // For other errors, log and reject immediately
+                console.error('❌ Geolocation error details:', {
+                  code: err.code,
+                  message: err.message
+                });
+                const error = new Error(err.message || 'Geolocation error');
+                error.code = err.code;
+                hasResolved = true;
+                reject(error);
+              }
+            }
+          }, 100); // Small delay to allow success to fire first
+        };
+        
+        navigator.geolocation.getCurrentPosition(
+          successHandler,
+          errorHandler,
+          {
+            enableHighAccuracy: true,
+            timeout: 15000,
+            maximumAge: 60000 // Allow cached location (1 minute old max)
+          }
+        );
+      });
+      
+      const position = await positionPromise;
+
+      const { latitude, longitude } = position.coords;
+      console.log(`📍 Fetching safe zones for location: [${latitude}, ${longitude}]`);
+
+      // Fetch nearby safe places
+      const response = await getNearbySafePlaces(latitude, longitude);
+      
+      if (response.safePlaces && response.safePlaces.length > 0) {
+        setSafeZones(response.safePlaces);
+        console.log(`✅ Found ${response.safePlaces.length} safe places nearby`);
+      } else {
+        setSafeZones([]);
+        alert('No safe places found nearby. Please try again later or check your location.');
+      }
+    } catch (error) {
+      console.error('Error fetching safe zones:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack,
+        name: error.name
+      });
+      
+      // Handle geolocation errors
+      if (error.code !== undefined || error.message?.includes('denied') || error.message?.includes('permission')) {
+        if (error.code === 1 || error.code === error.PERMISSION_DENIED || error.message?.includes('denied') || error.message?.includes('permission')) {
+          alert('📍 Location access denied.\n\nPlease allow location access in your browser settings to find nearby safe zones.\n\nYou can enable it by:\n1. Clicking the lock icon (or site icon) in your browser\'s address bar\n2. Setting Location/Permissions to "Allow"\n3. Refreshing the page and trying again.\n\nNote: Some browsers may require HTTPS for location access.');
+        } else if (error.code === 2 || error.code === error.POSITION_UNAVAILABLE) {
+          alert('⚠️ Location information unavailable.\n\nPlease check your GPS settings and ensure location services are enabled on your device.');
+        } else if (error.code === 3 || error.code === error.TIMEOUT) {
+          alert('⏱️ Location request timed out.\n\nPlease try again. Make sure your GPS is enabled and you have a clear view of the sky.');
+        } else {
+          alert(`❌ Location error: ${error.message || 'Unknown error'}\n\nPlease try again.`);
+        }
+      } else {
+        // Handle API errors
+        const errorMessage = error.message || error.data?.error || 'Unknown error';
+        console.error('API error details:', {
+          message: errorMessage,
+          response: error.response,
+          data: error.data
+        });
+        
+        if (error.response?.status === 404) {
+          alert('📍 No safe places found nearby.\n\nPlease try again with a different location.');
+        } else if (error.response?.status === 500 || error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError')) {
+          alert('⚠️ Backend server error.\n\nPlease make sure the server is running on port 3001.\n\nIf the server is running, it might be a network issue. Please check your connection.');
+        } else {
+          alert(`❌ Failed to fetch safe zones: ${errorMessage}\n\nPlease try again.`);
+        }
+      }
+      
+      setSafeZones([]);
+    } finally {
+      setLoadingSafeZones(false);
+    }
+  };
+
   const handleRouteComplete = () => {
     // Simulate route completion
     setRouteCompleted(true);
-    setShowFeedbackModal(true);
   };
-
-  // Simulate route completion after estimated time (optional - can be triggered manually)
-  useEffect(() => {
-    if (selected && routeStartTimeRef.current && !routeCompleted) {
-      const estimatedTime = selected.etaMin * 60 * 1000; // Convert to milliseconds
-      const timer = setTimeout(() => {
-        setRouteCompleted(true);
-        setShowFeedbackModal(true);
-      }, Math.min(estimatedTime, 60000)); // Max 60 seconds for demo
-      
-      return () => clearTimeout(timer);
-    }
-  }, [selected, routeCompleted]);
 
   return (
     <div className="h-full w-full grid grid-cols-1 lg:grid-cols-[380px_1fr]">
@@ -600,24 +761,22 @@ export default function RoutePlanner() {
             routes={routes} 
             selectedRoute={selected}
             accidents={accidents}
+            safeZones={safeZones}
             source={source}
             destination={dest}
+            predictiveAlert={predictiveAlert}
             onCurrentLocationAsSource={(address) => {
               setSource(address);
               sourceRef.current = address;
             }}
           />
         </div>
-        <FloatingButtons onRecalculate={handleRecalculate} />
+        <FloatingButtons 
+          onRecalculate={handleRecalculate} 
+          onFindSafeZones={handleFindSafeZones}
+          loadingSafeZones={loadingSafeZones}
+        />
       </div>
-      
-      {/* Feedback Modal */}
-      <FeedbackModal
-        isOpen={showFeedbackModal}
-        onClose={() => setShowFeedbackModal(false)}
-        routeId={selected?.id}
-        safetyScore={selected?.score}
-      />
       
       {/* AI Suggestion Modal */}
       <AISuggestionModal
@@ -625,6 +784,39 @@ export default function RoutePlanner() {
         onClose={() => setShowAISuggestion(false)}
         suggestion={aiSuggestion}
       />
+      
+      {/* AI Predictive Alert Modal */}
+      {predictiveAlert && (
+        <motion.div
+          initial={{ opacity: 0, y: -50 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -50 }}
+          className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 w-full max-w-md"
+        >
+          <div className="glass rounded-2xl p-6 border-2 border-yellow-500/50 shadow-2xl bg-gradient-to-br from-yellow-900/30 to-orange-900/30 backdrop-blur-xl">
+            <div className="flex items-start gap-4">
+              <div className="text-4xl animate-pulse">🔮</div>
+              <div className="flex-1">
+                <h3 className="font-bold text-xl mb-2 text-yellow-300">
+                  AI PREDICTIVE ALERT
+                </h3>
+                <p className="text-sm mb-4 opacity-90 text-white">
+                  Our model predicts a high probability of a safety incident (severe traffic jam, dangerous crowding) in the <strong className="text-yellow-200">{predictiveAlert.area || 'Kanthavanam Junction'} area</strong> within the next 15 minutes.
+                </p>
+                <div className="text-xs opacity-70 mb-4 italic text-white">
+                  [Re-routing you to a safer alternative...]
+                </div>
+                <button
+                  onClick={() => setPredictiveAlert(null)}
+                  className="w-full rounded-lg bg-gradient-to-r from-yellow-600 to-orange-600 py-2 hover:brightness-110 font-semibold text-sm transition-all text-white shadow-lg"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+      )}
     </div>
   );
 }

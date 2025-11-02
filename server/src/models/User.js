@@ -72,5 +72,46 @@ const userSchema = new mongoose.Schema({
 userSchema.index({ email: 1 });
 userSchema.index({ googleId: 1 });
 
-export default mongoose.model('User', userSchema);
+// Fix phone index - ensure sparse index is used
+// The schema already has sparse: true, but we need to ensure the index exists
+userSchema.index({ phone: 1 }, { unique: true, sparse: true });
+
+const User = mongoose.model('User', userSchema);
+
+// Fix old phone_1 index after connection
+// This will run once when the database connects
+if (mongoose.connection.readyState === 1) {
+  fixPhoneIndex();
+} else {
+  mongoose.connection.once('connected', fixPhoneIndex);
+}
+
+async function fixPhoneIndex() {
+  try {
+    const indexes = await User.collection.getIndexes();
+    
+    // Check if old non-sparse index exists
+    if (indexes.phone_1 && !indexes.phone_1.sparse) {
+      console.log('🔧 Fixing phone index: dropping old non-sparse index...');
+      await User.collection.dropIndex('phone_1');
+      console.log('✅ Dropped old phone_1 index');
+      
+      // Recreate with sparse (schema will auto-create, but we do it explicitly)
+      await User.collection.createIndex({ phone: 1 }, { unique: true, sparse: true });
+      console.log('✅ Created sparse phone index');
+    } else if (indexes.phone_1 && indexes.phone_1.sparse) {
+      console.log('✅ Phone index is already sparse');
+    } else {
+      // Index doesn't exist, let Mongoose create it from schema
+      console.log('📝 Phone index will be created from schema');
+    }
+  } catch (err) {
+    // Ignore "index not found" errors
+    if (!err.message.includes('index not found') && !err.message.includes('ns not found')) {
+      console.log('⚠️  Could not fix phone index:', err.message);
+    }
+  }
+}
+
+export default User;
 

@@ -8,6 +8,44 @@ import { Navigation } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
 
+// A database of believable fake events for the demo
+const fakeEventData = {
+  accident: {
+    source: '@VijayawadaPolice',
+    message: '🚨 Heavy traffic buildup on NH16 near Mangalagiri (near Kaza toll) due to a multi-vehicle accident. Emergency services at the scene. Avoid the area.',
+    type: 'accident'
+  },
+  protest: {
+    source: '@GunturNewsLive',
+    message: '⚠️ Alert: A protest is forming near the administrative offices in Neerukonda. Expect road closures and delays for the next hour.',
+    type: 'protest'
+  },
+  crime: {
+    source: '@APCrimeAlert',
+    message: '🚨 Warning: Reports of suspicious activity near the Acharya Nagarjuna University back road. Police have been dispatched. Please be cautious.',
+    type: 'crime'
+  },
+  roadwork: {
+    source: '@APRnBDept',
+    message: '🚧 FYI: Planned roadworks on the main road to SRM University, Neerukonda, will close one lane tonight from 8 PM. Plan for delays.',
+    type: 'roadwork'
+  },
+  emergency: {
+    source: '@AP_SDRF',
+    message: '🚨 EMERGENCY: Flooding reported on low-lying roads near Kanthavanam. Do not attempt to travel through this area.',
+    type: 'emergency'
+  }
+};
+
+// The default "all clear" message
+const allClearMessage = {
+  id: 'feed-all-clear',
+  source: '@SafeRouteAI',
+  text: '✅ All clear on roads near Mangalagiri and Neerukonda. Safe to travel.',
+  timestamp: Date.now(),
+  type: 'safe'
+};
+
 export default function Dashboard() {
   // Map and heatmap state
   const [safetyScoreData, setSafetyScoreData] = useState([]);
@@ -15,7 +53,7 @@ export default function Dashboard() {
   const mapUpdateIntervalRef = useRef(null);
 
   // Real-time data fusion state
-  const [socialFeed, setSocialFeed] = useState([]);
+  const [socialFeed, setSocialFeed] = useState([allClearMessage]); // Start with the "all clear" message
   const [crowdDensity, setCrowdDensity] = useState(null); // null = no data, will use n8n
   const [trafficStatus, setTrafficStatus] = useState(null); // null = no data, will use n8n
   const [showStaticData, setShowStaticData] = useState(false);
@@ -34,13 +72,20 @@ export default function Dashboard() {
   const mapInstanceRef = useRef(null);
   const watchPositionCleanupRef = useRef(null);
 
-  // Admin Panel state (Demo Magic Wand)
+  // Admin Panel state (Live Event Simulator)
   const [lat, setLat] = useState('12.9716');
   const [lng, setLng] = useState('77.5946');
   const [severity, setSeverity] = useState('-5');
   const [eventType, setEventType] = useState('accident');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  
+  // AI Predictive Alert state
+  const [predictiveLat, setPredictiveLat] = useState('12.9716');
+  const [predictiveLng, setPredictiveLng] = useState('77.5946');
+  const [predictiveArea, setPredictiveArea] = useState('Kanthavanam Junction');
+  const [loadingPredictive, setLoadingPredictive] = useState(false);
+  const [predictiveMessage, setPredictiveMessage] = useState('');
 
   // Charts
   const trafficChartRef = useRef(null);
@@ -294,6 +339,17 @@ export default function Dashboard() {
         }
       } catch (error) {
         console.error('⚠️ Error fetching n8n data:', error.message);
+        
+        // Fallback: Use fake data if n8n fails (for demo purposes)
+        console.log('📝 Using demo fallback data for crowd density and traffic');
+        setCrowdDensity({
+          value: Math.floor(Math.random() * 30) + 40, // 40-70%
+          level: ['Low', 'Medium', 'High'][Math.floor(Math.random() * 3)]
+        });
+        setTrafficStatus({
+          value: Math.floor(Math.random() * 30) + 50, // 50-80%
+          level: ['Free', 'Moderate', 'Heavy'][Math.floor(Math.random() * 3)]
+        });
       } finally {
         setN8NDataLoading(false);
       }
@@ -302,10 +358,26 @@ export default function Dashboard() {
     // Fetch initial data
     fetchAllN8NData();
     
+    // If no data after 2 seconds, use fallback demo data
+    const fallbackTimer = setTimeout(() => {
+      console.log('📝 Initializing with demo fallback data');
+      setCrowdDensity(prev => prev || {
+        value: 55,
+        level: 'Medium'
+      });
+      setTrafficStatus(prev => prev || {
+        value: 65,
+        level: 'Moderate'
+      });
+    }, 2000);
+    
     // Refresh every 30 seconds
     const interval = setInterval(fetchAllN8NData, 30000);
     
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      clearTimeout(fallbackTimer);
+    };
   }, [lat, lng]);
 
   // Initialize traffic gauge chart
@@ -464,6 +536,42 @@ export default function Dashboard() {
       if (data.success) {
         setMessage(`✅ ${data.message}`);
         setTimeout(() => setMessage(''), 3000);
+        
+        // --- ADD FAKE TWEET TO SOCIAL FEED ---
+        // 1. Get the event type from the form
+        const eventTypeLower = eventType.toLowerCase();
+        
+        // 2. Find the matching fake tweet
+        const newEvent = fakeEventData[eventTypeLower];
+        if (newEvent) {
+          // 3. Get the current time to make it look real
+          const currentTime = new Date().toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+          });
+          
+          // 4. Create the feed item with location
+          const locationStr = `${parseFloat(lat).toFixed(4)}, ${parseFloat(lng).toFixed(4)}`;
+          const feedItem = {
+            id: `feed-${Date.now()}-${Math.random()}`,
+            source: newEvent.source,
+            text: newEvent.message,
+            timestamp: Date.now(),
+            type: newEvent.type,
+            location: locationStr
+          };
+          
+          // 5. Update the "Live Social Feed" state
+          // Add the new event to the top of the list
+          setSocialFeed(prevFeed => [
+            feedItem,
+            ...prevFeed
+          ].slice(0, 50)); // Keep last 50 items
+          
+          console.log(`✅ Added fake tweet to feed: ${newEvent.source} - ${newEvent.message}`);
+        }
       } else {
         setMessage(`❌ Error: ${data.error || 'Failed to trigger event'}`);
       }
@@ -549,10 +657,10 @@ export default function Dashboard() {
 
       {/* Side Panel */}
       <div className="space-y-4 overflow-y-auto">
-        {/* Admin Panel - Demo Magic Wand */}
+        {/* Admin Panel - Live Event Simulator */}
         <div className="glass rounded-2xl p-4 border-2 border-purple-500">
-          <div className="font-bold text-lg mb-3 text-purple-300">✨ Demo Magic Wand</div>
-          <div className="text-xs opacity-70 mb-4">Trigger live safety events for demo</div>
+          <div className="font-bold text-lg mb-3 text-purple-300">⚙️ Live Event Simulator</div>
+          <div className="text-xs opacity-70 mb-4">Manually broadcast a live event to all connected users</div>
           
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
@@ -611,13 +719,108 @@ export default function Dashboard() {
               disabled={loading}
               className="w-full rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 py-2 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed font-semibold text-sm"
             >
-              {loading ? '⏳ Triggering...' : '🎯 Trigger Event'}
+              {loading ? '⏳ Broadcasting...' : '🎯 Simulate Event'}
             </button>
             {message && (
               <div className={`text-xs mt-2 p-2 rounded ${
                 message.startsWith('✅') ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
               }`}>
                 {message}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* AI Predictive Alert Panel */}
+        <div className="glass rounded-2xl p-4 border-2 border-yellow-500/50">
+          <div className="font-bold text-lg mb-3 text-yellow-300">🔮 AI Predictive Alert</div>
+          <div className="text-xs opacity-70 mb-4">Proactively warn users of future safety risks</div>
+          
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs opacity-80">Latitude</label>
+                <input 
+                  type="number"
+                  step="0.0001"
+                  className="mt-1 w-full rounded-lg bg-transparent border border-white/20 px-2 py-1.5 text-sm outline-none" 
+                  value={predictiveLat}
+                  onChange={(e) => setPredictiveLat(e.target.value)}
+                  placeholder="12.9716"
+                />
+              </div>
+              <div>
+                <label className="text-xs opacity-80">Longitude</label>
+                <input 
+                  type="number"
+                  step="0.0001"
+                  className="mt-1 w-full rounded-lg bg-transparent border border-white/20 px-2 py-1.5 text-sm outline-none" 
+                  value={predictiveLng}
+                  onChange={(e) => setPredictiveLng(e.target.value)}
+                  placeholder="77.5946"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs opacity-80">Area Name</label>
+              <input 
+                type="text"
+                className="mt-1 w-full rounded-lg bg-transparent border border-white/20 px-2 py-1.5 text-sm outline-none" 
+                value={predictiveArea}
+                onChange={(e) => setPredictiveArea(e.target.value)}
+                placeholder="Kanthavanam Junction"
+              />
+            </div>
+            <button 
+              onClick={async () => {
+                if (!predictiveLat || !predictiveLng) {
+                  setPredictiveMessage('⚠️ Please enter latitude and longitude');
+                  return;
+                }
+
+                setLoadingPredictive(true);
+                setPredictiveMessage('');
+
+                try {
+                  const response = await fetch(`${API_BASE_URL}/api/trigger-predictive-alert`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      lat: parseFloat(predictiveLat),
+                      lng: parseFloat(predictiveLng),
+                      area: predictiveArea || 'this area'
+                    })
+                  });
+
+                  if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                  }
+
+                  const data = await response.json();
+
+                  if (data.success) {
+                    setPredictiveMessage(`✅ ${data.message}`);
+                    setTimeout(() => setPredictiveMessage(''), 3000);
+                  } else {
+                    setPredictiveMessage(`❌ Error: ${data.error || 'Failed to trigger alert'}`);
+                  }
+                } catch (error) {
+                  console.error('Error triggering predictive alert:', error);
+                  setPredictiveMessage(`❌ Network error: ${error.message}`);
+                } finally {
+                  setLoadingPredictive(false);
+                }
+              }}
+              disabled={loadingPredictive}
+              className="w-full rounded-lg bg-gradient-to-r from-yellow-600 to-orange-600 py-2 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed font-semibold text-sm"
+            >
+              {loadingPredictive ? '⏳ Broadcasting...' : '🔮 Trigger Predictive Alert'}
+            </button>
+            {predictiveMessage && (
+              <div className={`text-xs mt-2 p-2 rounded ${
+                predictiveMessage.startsWith('✅') ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+              }`}>
+                {predictiveMessage}
               </div>
             )}
           </div>

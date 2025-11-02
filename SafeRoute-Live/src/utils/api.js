@@ -179,4 +179,23 @@ export async function reverseGeocode(longitude, latitude) {
   }
 }
 
+/**
+ * Fetch nearby safe places (police stations, hospitals, petrol bunks, cafes, supermarkets)
+ * @param {number} lat - Latitude coordinate
+ * @param {number} lng - Longitude coordinate
+ * @returns {Promise<Object>} Safe places data
+ */
+export async function getNearbySafePlaces(lat, lng) {
+  const params = new URLSearchParams({ lat: lat.toString(), lng: lng.toString() });
+  const res = await fetch(`${API_BASE_URL}/api/nearbySafePlaces?${params}`);
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    const error = new Error(errorData.error || 'Failed to fetch nearby safe places');
+    error.response = res;
+    error.data = errorData;
+    throw error;
+  }
+  return res.json();
+}
+
 
