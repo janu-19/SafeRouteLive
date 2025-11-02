@@ -134,10 +134,10 @@ export default function ThemeSelector() {
       {isOpen && (
         <>
           <div 
-            className="fixed inset-0 z-40" 
+            className="fixed inset-0 z-[9998]" 
             onClick={() => setIsOpen(false)}
           />
-          <div className="absolute right-0 top-12 z-50 w-64 glass rounded-xl border border-slate-200/50 dark:border-slate-700/50 shadow-xl backdrop-blur-xl p-3">
+          <div className="absolute right-0 top-12 z-[9999] w-64 bg-white dark:bg-slate-800 rounded-xl border border-slate-200/50 dark:border-slate-700/50 shadow-2xl p-3">
             <div className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2 px-2">
               Choose Theme
             </div>

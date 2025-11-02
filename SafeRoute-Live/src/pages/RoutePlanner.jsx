@@ -245,7 +245,8 @@ export default function RoutePlanner() {
 
   // Handle suggestion selection
   const handleSourceSuggestion = (suggestion) => {
-    const address = suggestion.place_name || suggestion.text;
+    // Use a shorter, cleaner address format
+    const address = suggestion.text || suggestion.place_name;
     setSource(address);
     sourceRef.current = address;
     setShowSourceSuggestions(false);
@@ -253,7 +254,8 @@ export default function RoutePlanner() {
   };
 
   const handleDestSuggestion = (suggestion) => {
-    const address = suggestion.place_name || suggestion.text;
+    // Use a shorter, cleaner address format
+    const address = suggestion.text || suggestion.place_name;
     setDest(address);
     destRef.current = address;
     setShowDestSuggestions(false);

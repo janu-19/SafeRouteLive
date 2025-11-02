@@ -1461,34 +1461,40 @@ async function geocodeAddress(address) {
     throw new Error('Address is required');
   }
 
+  console.log(`🔍 Geocoding address: "${address}"`);
+
   // Clean and prepare address variants
   const cleanAddress = address.trim();
   
   // Extract potential components (for India addresses)
   const addressParts = cleanAddress.split(',').map(part => part.trim()).filter(part => part.length > 0);
   
-  // Build progressive fallback addresses
+  // Build progressive fallback addresses - START WITH SIMPLER VARIANTS FIRST
   const addressVariants = [];
   
-  // 1. Try original address
-  addressVariants.push(cleanAddress);
-  
-  // 2. Try without postal code (if present)
-  const withoutPostal = addressParts.filter(part => !/^\d{6}$/.test(part)).join(', ');
-  if (withoutPostal !== cleanAddress) {
-    addressVariants.push(withoutPostal);
-  }
-  
-  // 3. Try with key location parts (city, district, state, country)
-  // For format like "N10, 522240, Kuragallu, Mangalagiri, Guntur, Andhra Pradesh, India"
-  // Extract: Kuragallu, Mangalagiri, Guntur, Andhra Pradesh
+  // Filter out India, postal codes, and other noise
   const locationParts = addressParts.filter(part => 
     !part.match(/^N\d+$|^\d{6}$|^India$/i)
   );
+  
+  // 1. Try just the first part (main location name) - SIMPLEST FIRST
+  if (addressParts.length > 0) {
+    addressVariants.push(addressParts[0]);
+  }
+  
+  // 2. Try first part + city (if we have multiple parts)
+  if (addressParts.length >= 2) {
+    addressVariants.push(`${addressParts[0]}, ${addressParts[addressParts.length - 1]}`);
+  }
+  
+  // 3. Try without postal code (if present)
+  const withoutPostal = addressParts.filter(part => !/^\d{6}$/.test(part)).join(', ');
+  if (withoutPostal !== cleanAddress && withoutPostal.length < 100) {
+    addressVariants.push(withoutPostal);
+  }
+  
+  // 4. Try with key location parts (city, district, state)
   if (locationParts.length > 0) {
-    // Try with all location parts
-    addressVariants.push(locationParts.join(', '));
-    
     // Try with city/district and state
     if (locationParts.length >= 2) {
       addressVariants.push(`${locationParts[locationParts.length - 2]}, ${locationParts[locationParts.length - 1]}`);
@@ -1500,8 +1506,15 @@ async function geocodeAddress(address) {
     }
   }
   
+  // 5. Try original address LAST (only if not too long)
+  if (cleanAddress.length < 150) {
+    addressVariants.push(cleanAddress);
+  }
+  
   // Remove duplicates
   const uniqueVariants = [...new Set(addressVariants)];
+  
+  console.log(`📋 Trying ${uniqueVariants.length} address variants:`, uniqueVariants);
   
   // Try each variant
   for (const variant of uniqueVariants) {
@@ -1511,12 +1524,17 @@ async function geocodeAddress(address) {
       // Try with India country code for better results
       const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodedAddress}.json?access_token=${MAPBOX_ACCESS_TOKEN}&country=IN&limit=5`;
       
+      console.log(`🌐 Trying Mapbox geocoding for: "${variant}"`);
       const response = await fetch(url);
+      
       if (!response.ok) {
+        console.log(`❌ Mapbox API returned ${response.status} for "${variant}"`);
         continue; // Try next variant
       }
 
       const data = await response.json();
+      console.log(`📊 Mapbox returned ${data.features?.length || 0} results for "${variant}"`);
+      
       if (data.features && data.features.length > 0) {
         // Prefer results in India
         let bestMatch = data.features.find(f => 
@@ -1530,7 +1548,7 @@ async function geocodeAddress(address) {
         }
         
         const coords = bestMatch.center; // [lng, lat]
-        console.log(`✅ Geocoded "${variant}" to [${coords[0]}, ${coords[1]}]`);
+        console.log(`✅ Geocoded "${variant}" to [${coords[0]}, ${coords[1]}] (${bestMatch.place_name})`);
         return coords;
       }
     } catch (error) {
@@ -1546,6 +1564,7 @@ async function geocodeAddress(address) {
       const encodedAddress = encodeURIComponent(lastResort);
       const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodedAddress}.json?access_token=${MAPBOX_ACCESS_TOKEN}&country=IN&limit=3`;
       
+      console.log(`🔄 Last resort geocoding: "${lastResort}"`);
       const response = await fetch(url);
       if (response.ok) {
         const data = await response.json();
@@ -1560,6 +1579,7 @@ async function geocodeAddress(address) {
     }
   }
   
+  console.log(`❌ All geocoding attempts failed for: "${address}"`);
   throw new Error(`No location found for: ${address}`);
 }
 

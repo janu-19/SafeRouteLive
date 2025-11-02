@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Eye, EyeOff, ArrowRight } from 'lucide-react';
@@ -14,9 +14,28 @@ export default function Login() {
   const [phone, setPhone] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [agreeToTerms, setAgreeToTerms] = useState(false);
+  const [isDark, setIsDark] = useState(true);
   
   const { login, register, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    // Check theme
+    const checkTheme = () => {
+      setIsDark(document.documentElement.classList.contains('dark'));
+    };
+    
+    checkTheme();
+    
+    // Watch for theme changes
+    const observer = new MutationObserver(checkTheme);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    });
+    
+    return () => observer.disconnect();
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -60,10 +79,20 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex bg-slate-900">
+    <div className={`min-h-screen flex transition-colors duration-300 ${
+      isDark ? 'bg-slate-900' : 'bg-slate-100'
+    }`}>
       {/* Left Side - Static Background */}
       <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden">
-        <div className="w-full h-full bg-gradient-to-br from-purple-600 via-purple-700 to-indigo-800 flex flex-col items-center justify-center p-12 relative">
+        <div 
+          className="w-full h-full flex flex-col items-center justify-center p-12 relative transition-all duration-500"
+          style={{
+            background: isDark
+              ? 'linear-gradient(to bottom right, var(--color-primary), var(--color-secondary), var(--color-accent))'
+              : 'linear-gradient(to bottom right, var(--color-primary), var(--color-secondary), var(--color-accent))',
+            opacity: isDark ? 1 : 0.9
+          }}
+        >
           {/* Logo */}
           <div className="absolute top-8 left-8">
             <div className="text-white text-3xl font-bold tracking-wider">SafeRoute</div>
@@ -87,19 +116,27 @@ export default function Login() {
       </div>
 
       {/* Right Side - Form */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-slate-900">
+      <div className={`w-full lg:w-1/2 flex items-center justify-center p-8 transition-colors duration-300 ${
+        isDark ? 'bg-slate-900' : 'bg-white'
+      }`}>
         <div className="w-full max-w-md">
           <div className="mb-8">
-            <h2 className="text-4xl font-bold text-white mb-2">
+            <h2 className={`text-4xl font-bold mb-2 transition-colors ${
+              isDark ? 'text-white' : 'text-slate-900'
+            }`}>
               {isSignup ? 'Create an account' : 'Welcome Back'}
             </h2>
-            <p className="text-slate-400">
+            <p className={`transition-colors ${
+              isDark ? 'text-slate-400' : 'text-slate-600'
+            }`}>
               {isSignup ? (
                 <>
                   Already have an account?{' '}
                   <button
                     onClick={() => setIsSignup(false)}
-                    className="text-purple-400 hover:text-purple-300 underline"
+                    className={`underline transition-colors ${
+                      isDark ? 'text-purple-400 hover:text-purple-300' : 'text-purple-600 hover:text-purple-700'
+                    }`}
                   >
                     Log in
                   </button>
@@ -109,7 +146,9 @@ export default function Login() {
                   Don't have an account?{' '}
                   <button
                     onClick={() => setIsSignup(true)}
-                    className="text-purple-400 hover:text-purple-300 underline"
+                    className={`underline transition-colors ${
+                      isDark ? 'text-purple-400 hover:text-purple-300' : 'text-purple-600 hover:text-purple-700'
+                    }`}
                   >
                     Sign up
                   </button>
@@ -132,7 +171,11 @@ export default function Login() {
                     type="text"
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
-                    className="w-full rounded-lg bg-slate-800/50 border border-slate-700 text-white px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 placeholder-slate-500"
+                    className={`w-full rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors ${
+                      isDark 
+                        ? 'bg-slate-800/50 border border-slate-700 text-white placeholder-slate-500' 
+                        : 'bg-slate-50 border border-slate-300 text-slate-900 placeholder-slate-400'
+                    }`}
                     placeholder="First name"
                     required
                   />
@@ -142,7 +185,11 @@ export default function Login() {
                     type="text"
                     value={lastName}
                     onChange={(e) => setLastName(e.target.value)}
-                    className="w-full rounded-lg bg-slate-800/50 border border-slate-700 text-white px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 placeholder-slate-500"
+                    className={`w-full rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors ${
+                      isDark 
+                        ? 'bg-slate-800/50 border border-slate-700 text-white placeholder-slate-500' 
+                        : 'bg-slate-50 border border-slate-300 text-slate-900 placeholder-slate-400'
+                    }`}
                     placeholder="Last name"
                   />
                 </div>
@@ -154,7 +201,11 @@ export default function Login() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-lg bg-slate-800/50 border border-slate-700 text-white px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 placeholder-slate-500"
+                className={`w-full rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors ${
+                  isDark 
+                    ? 'bg-slate-800/50 border border-slate-700 text-white placeholder-slate-500' 
+                    : 'bg-slate-50 border border-slate-300 text-slate-900 placeholder-slate-400'
+                }`}
                 placeholder="Email"
                 required
               />
@@ -165,14 +216,20 @@ export default function Login() {
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-lg bg-slate-800/50 border border-slate-700 text-white px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 placeholder-slate-500"
+                className={`w-full rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors ${
+                  isDark 
+                    ? 'bg-slate-800/50 border border-slate-700 text-white placeholder-slate-500' 
+                    : 'bg-slate-50 border border-slate-300 text-slate-900 placeholder-slate-400'
+                }`}
                 placeholder="Enter your password"
                 required
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300"
+                className={`absolute right-3 top-1/2 -translate-y-1/2 transition-colors ${
+                  isDark ? 'text-slate-400 hover:text-slate-300' : 'text-slate-500 hover:text-slate-600'
+                }`}
               >
                 {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
@@ -187,9 +244,13 @@ export default function Login() {
                   onChange={(e) => setAgreeToTerms(e.target.checked)}
                   className="mt-1 w-4 h-4 rounded border-slate-700 bg-slate-800/50 text-purple-500 focus:ring-2 focus:ring-purple-500"
                 />
-                <label htmlFor="terms" className="text-sm text-slate-400">
+                <label htmlFor="terms" className={`text-sm transition-colors ${
+                  isDark ? 'text-slate-400' : 'text-slate-600'
+                }`}>
                   I agree to the{' '}
-                  <a href="#" className="text-purple-400 hover:text-purple-300 underline">
+                  <a href="#" className={`underline transition-colors ${
+                    isDark ? 'text-purple-400 hover:text-purple-300' : 'text-purple-600 hover:text-purple-700'
+                  }`}>
                     Terms & Conditions
                   </a>
                 </label>
@@ -208,16 +269,24 @@ export default function Login() {
           <div className="mt-6">
             <div className="relative">
               <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-700"></div>
+                <div className={`w-full border-t transition-colors ${
+                  isDark ? 'border-slate-700' : 'border-slate-300'
+                }`}></div>
               </div>
               <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-slate-900 text-slate-500">Or register with</span>
+                <span className={`px-2 transition-colors ${
+                  isDark ? 'bg-slate-900 text-slate-500' : 'bg-white text-slate-500'
+                }`}>Or register with</span>
               </div>
             </div>
 
             <button
               onClick={loginWithGoogle}
-              className="mt-6 w-full rounded-lg bg-slate-800/50 border border-slate-700 px-4 py-3 hover:bg-slate-800 transition-all flex items-center justify-center gap-3 text-white"
+              className={`mt-6 w-full rounded-lg px-4 py-3 transition-all flex items-center justify-center gap-3 ${
+                isDark 
+                  ? 'bg-slate-800/50 border border-slate-700 hover:bg-slate-800 text-white' 
+                  : 'bg-white border border-slate-300 hover:bg-slate-50 text-slate-900'
+              }`}
             >
               <svg className="w-5 h-5" viewBox="0 0 24 24">
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -230,7 +299,9 @@ export default function Login() {
           </div>
 
           <div className="mt-6 text-center">
-            <Link to="/" className="text-sm text-slate-500 hover:text-slate-400">
+            <Link to="/" className={`text-sm transition-colors ${
+              isDark ? 'text-slate-500 hover:text-slate-400' : 'text-slate-600 hover:text-slate-700'
+            }`}>
               Continue without account
             </Link>
           </div>
