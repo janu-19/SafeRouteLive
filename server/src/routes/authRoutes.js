@@ -12,19 +12,60 @@ const JWT_SECRET = process.env.JWT_SECRET || 'demo-secret-key-change-in-producti
  */
 
 // Google OAuth login
-router.get('/google',
+router.get('/google', (req, res, next) => {
+  // Check if Google strategy is registered
+  const availableStrategies = Object.keys(passport._strategies || {});
+  console.log('🔍 Available passport strategies:', availableStrategies);
+  
+  if (!passport._strategies || !passport._strategies.google) {
+    console.error('❌ Google OAuth strategy not registered!');
+    console.error('   Available strategies:', availableStrategies);
+    console.error('   Environment check:');
+    console.error('     GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? 'Set' : 'Missing');
+    console.error('     GOOGLE_CLIENT_SECRET:', process.env.GOOGLE_CLIENT_SECRET ? 'Set' : 'Missing');
+    return res.status(500).json({
+      error: 'Google OAuth not configured',
+      message: 'Please check server configuration and .env file',
+      debug: {
+        availableStrategies,
+        hasClientId: !!process.env.GOOGLE_CLIENT_ID,
+        hasClientSecret: !!process.env.GOOGLE_CLIENT_SECRET
+      }
+    });
+  }
+  
+  console.log('🔐 Google OAuth login initiated');
   passport.authenticate('google', {
     scope: ['profile', 'email']
-  })
-);
+  })(req, res, next);
+});
 
 // Google OAuth callback
 router.get('/google/callback',
-  passport.authenticate('google', { session: false }),
+  (req, res, next) => {
+    console.log('🔄 Google OAuth callback received');
+    passport.authenticate('google', { session: false }, (err, user, info) => {
+      if (err) {
+        console.error('❌ Google OAuth error:', err);
+        const frontendURL = process.env.FRONTEND_URL || 'http://localhost:5173';
+        return res.redirect(`${frontendURL}/auth/callback?error=authentication_failed&message=${encodeURIComponent(err.message)}`);
+      }
+      
+      if (!user) {
+        console.error('❌ Google OAuth: No user returned');
+        const frontendURL = process.env.FRONTEND_URL || 'http://localhost:5173';
+        return res.redirect(`${frontendURL}/auth/callback?error=authentication_failed&message=No user data received`);
+      }
+      
+      // Store user in request for the next handler
+      req.user = user;
+      next();
+    })(req, res, next);
+  },
   async (req, res) => {
     try {
-      // req.user is set by passport (from the strategy)
       const user = req.user;
+      console.log('✅ Google OAuth success for user:', user.email);
       
       // Generate JWT token
       const token = jwt.sign(
@@ -39,11 +80,12 @@ router.get('/google/callback',
       
       // Redirect to frontend with token
       const frontendURL = process.env.FRONTEND_URL || 'http://localhost:5173';
+      console.log('🔗 Redirecting to frontend:', `${frontendURL}/auth/callback?token=***&success=true`);
       res.redirect(`${frontendURL}/auth/callback?token=${token}&success=true`);
     } catch (error) {
-      console.error('Google OAuth callback error:', error);
+      console.error('❌ Google OAuth callback error:', error);
       const frontendURL = process.env.FRONTEND_URL || 'http://localhost:5173';
-      res.redirect(`${frontendURL}/auth/callback?error=authentication_failed`);
+      res.redirect(`${frontendURL}/auth/callback?error=authentication_failed&message=${encodeURIComponent(error.message)}`);
     }
   }
 );

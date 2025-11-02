@@ -1,33 +1,47 @@
+// IMPORTANT: Load environment variables FIRST before any other imports
+// This must be done at the very top to ensure env vars are available to all modules
+import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Load environment variables from server/.env FIRST
+const envPath = join(__dirname, '.env');
+const envResult = dotenv.config({ path: envPath });
+
+if (envResult.error) {
+  console.error('⚠️  Error loading .env file:', envResult.error);
+} else {
+  console.log('✅ Environment variables loaded from:', envPath);
+  // Debug: Show if Google credentials are loaded (without showing the actual values)
+  console.log('   GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ Set' : '❌ Missing');
+  console.log('   GOOGLE_CLIENT_SECRET:', process.env.GOOGLE_CLIENT_SECRET ? '✅ Set' : '❌ Missing');
+}
+
+// NOW import other modules (they will have access to environment variables)
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
 import session from 'express-session';
 import passport from 'passport';
-import dotenv from 'dotenv';
-
-// Load environment variables
-dotenv.config();
 
 // Import database connection
 import { connectDB } from './src/config/database.js';
 
-// Import Passport configuration
+// Import Passport configuration (after env is loaded)
 import './src/config/passport.js';
+
+// Node.js 18+ has native fetch support
+// If using Node.js < 18, uncomment: import fetch from 'node-fetch';
 
 // Import routes
 import authRoutes from './src/routes/authRoutes.js';
 
 // Import models
 import Incident from './src/models/Incident.js';
-
-// Node.js 18+ has native fetch support
-// If using Node.js < 18, uncomment: import fetch from 'node-fetch';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const app = express();
 const httpServer = createServer(app);
