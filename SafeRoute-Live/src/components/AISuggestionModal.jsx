@@ -37,9 +37,22 @@ export default function AISuggestionModal({ isOpen, onClose, suggestion }) {
           >
             <div className="glass rounded-2xl p-6 max-w-lg w-full border border-white/20">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xl font-semibold flex items-center gap-2">
-                  🤖 AI Safety Suggestion
-                </h3>
+                <div>
+                  <h3 className="text-xl font-semibold flex items-center gap-2">
+                    🤖 AI Safety Suggestion
+                    {suggestion.realTimeData && (
+                      <span className="text-xs font-normal flex items-center gap-1 text-green-400">
+                        <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                        Live
+                      </span>
+                    )}
+                  </h3>
+                  {suggestion.realTimeData?.lastUpdated && (
+                    <p className="text-xs opacity-60 mt-1">
+                      Updated: {new Date(suggestion.realTimeData.lastUpdated).toLocaleTimeString()}
+                    </p>
+                  )}
+                </div>
                 <button
                   onClick={onClose}
                   className="text-xl opacity-60 hover:opacity-100 transition-opacity"
@@ -80,6 +93,45 @@ export default function AISuggestionModal({ isOpen, onClose, suggestion }) {
                         </motion.li>
                       ))}
                     </ul>
+                  </div>
+                )}
+                
+                {/* Real-time Data Summary */}
+                {suggestion.realTimeData && (
+                  <div className="bg-gradient-to-r from-green-500/20 to-blue-500/20 rounded-lg p-4 border border-green-500/30">
+                    <p className="font-semibold text-green-300 mb-2">📊 Real-time Conditions</p>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      {suggestion.realTimeData.incidentsCount > 0 && (
+                        <div className="flex items-center gap-1">
+                          <span>🚨</span>
+                          <span>{suggestion.realTimeData.incidentsCount} Active Incident{suggestion.realTimeData.incidentsCount > 1 ? 's' : ''}</span>
+                        </div>
+                      )}
+                      {suggestion.realTimeData.accidentsCount > 0 && (
+                        <div className="flex items-center gap-1">
+                          <span>⚠️</span>
+                          <span>{suggestion.realTimeData.accidentsCount} Accident{suggestion.realTimeData.accidentsCount > 1 ? 's' : ''}</span>
+                        </div>
+                      )}
+                      {suggestion.realTimeData.weather && (
+                        <div className="flex items-center gap-1">
+                          <span>🌤️</span>
+                          <span>{suggestion.realTimeData.weather.condition}</span>
+                        </div>
+                      )}
+                      {suggestion.realTimeData.traffic && (
+                        <div className="flex items-center gap-1">
+                          <span>🚦</span>
+                          <span>Traffic: {suggestion.realTimeData.traffic.level}</span>
+                        </div>
+                      )}
+                      {suggestion.realTimeData.incidentsCount === 0 && suggestion.realTimeData.accidentsCount === 0 && (
+                        <div className="col-span-2 flex items-center gap-1 text-green-400">
+                          <span>✅</span>
+                          <span>All clear - No active incidents</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
                 

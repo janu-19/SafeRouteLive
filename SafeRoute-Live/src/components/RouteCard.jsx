@@ -13,11 +13,13 @@ export default function RouteCard({
   index = 0,
   source = '',
   destination = '',
-  geometry = null
+  geometry = null,
+  scoreReasons = null
 }) {
   const safetyLabel = score > 75 ? 'Safe' : score >= 50 ? 'Moderate' : 'Risky';
   const isNight = metadata?.isNight || false;
   const isMonsoon = metadata?.isMonsoon || false;
+  const [showReasons, setShowReasons] = useState(false);
   
 
 
@@ -86,6 +88,54 @@ export default function RouteCard({
         <span className="opacity-70 font-semibold">Score: {score}</span>
       </div>
 
+      {/* Score Reasons - Show if score is low */}
+      {score < 75 && scoreReasons && (scoreReasons.negative?.length > 0 || scoreReasons.positive?.length > 0) && (
+        <div className="mt-3 pt-3 border-t border-white/10">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowReasons(!showReasons);
+            }}
+            className="w-full text-left text-xs text-yellow-400 hover:text-yellow-300 flex items-center justify-between"
+          >
+            <span>
+              {score < 50 ? '⚠️ Why is score low?' : 'ℹ️ Safety factors'}
+            </span>
+            <span>{showReasons ? '▲' : '▼'}</span>
+          </button>
+          
+          {showReasons && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mt-2 space-y-1.5"
+            >
+              {scoreReasons.negative && scoreReasons.negative.length > 0 && (
+                <div>
+                  <div className="text-xs font-semibold text-red-400 mb-1">Concerns:</div>
+                  {scoreReasons.negative.slice(0, 5).map((reason, idx) => (
+                    <div key={idx} className="text-xs text-red-300/80 ml-2 mb-1">
+                      • {reason}
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {scoreReasons.positive && scoreReasons.positive.length > 0 && (
+                <div>
+                  <div className="text-xs font-semibold text-green-400 mb-1 mt-2">Positive factors:</div>
+                  {scoreReasons.positive.map((factor, idx) => (
+                    <div key={idx} className="text-xs text-green-300/80 ml-2 mb-1">
+                      • {factor}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+        </div>
+      )}
       
     </motion.div>
   );

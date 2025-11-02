@@ -7,7 +7,8 @@ import Controls from '../components/Controls.jsx';
 import { useSocket } from '../context/SocketContext.jsx';
 import { watchPosition, requestGeolocationPermission, isGeolocationSupported, getCurrentPosition } from '../utils/geolocation.js';
 import { revokeShareSession, getActiveSessions } from '../services/shareService.js';
-import { Copy, Check, Wifi, WifiOff, AlertCircle, X } from 'lucide-react';
+import { Copy, Check, Wifi, WifiOff, AlertCircle, X, MessageCircle } from 'lucide-react';
+import ChatWindow from '../components/ChatWindow.jsx';
 
 /**
  * ShareTracking Page
@@ -31,13 +32,12 @@ export default function ShareTracking({ sessionId: propSessionId }) {
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [currentSession, setCurrentSession] = useState(null);
   const [isSharing, setIsSharing] = useState(false);
+  const [showChat, setShowChat] = useState(false);
   
   // Refs
   const mapRef = useRef(null);
   const watchPositionCleanupRef = useRef(null);
   const hasCenteredRef = useRef(false);
-  const lastUpdateTimeRef = useRef(0);
-  const locationUpdateIntervalRef = useRef(null);
 
   // Find current session from active sessions
   useEffect(() => {
@@ -119,9 +119,6 @@ export default function ShareTracking({ sessionId: propSessionId }) {
       if (watchPositionCleanupRef.current) {
         watchPositionCleanupRef.current();
       }
-      if (locationUpdateIntervalRef.current) {
-        clearInterval(locationUpdateIntervalRef.current);
-      }
       
       // Navigate away after 3 seconds
       setTimeout(() => {
@@ -157,16 +154,13 @@ export default function ShareTracking({ sessionId: propSessionId }) {
       (loc) => {
         setLocation(loc);
         
-        // Emit location update (rate-limited to 1 per second)
-        const now = Date.now();
-        if (now - lastUpdateTimeRef.current >= 1000 && socket && isConnected && isSharing) {
-          lastUpdateTimeRef.current = now;
-          
+        // Emit location update immediately (like real-time tracking)
+        if (socket && isConnected && isSharing) {
           socket.emit('location:update', {
             sessionId,
             lat: loc.latitude,
             lng: loc.longitude,
-            timestamp: now
+            timestamp: Date.now()
           });
         }
       },
@@ -186,9 +180,6 @@ export default function ShareTracking({ sessionId: propSessionId }) {
       
       if (watchPositionCleanupRef.current) {
         watchPositionCleanupRef.current();
-      }
-      if (locationUpdateIntervalRef.current) {
-        clearInterval(locationUpdateIntervalRef.current);
       }
     };
   }, [sessionId, socket, isConnected, permissionGranted, isSharing, navigate]);
@@ -335,6 +326,26 @@ export default function ShareTracking({ sessionId: propSessionId }) {
           <span className="text-sm text-green-300">Link copied!</span>
         </div>
       )}
+
+      {/* Chat Toggle Button */}
+      {isSharing && (
+        <div className="absolute bottom-6 right-6 z-10">
+          <button
+            onClick={() => setShowChat(!showChat)}
+            className="p-4 rounded-full bg-[var(--color-primary)] hover:opacity-90 transition-opacity shadow-lg flex items-center justify-center"
+            title="Toggle chat"
+          >
+            <MessageCircle size={24} className="text-white" />
+          </button>
+        </div>
+      )}
+
+      {/* Chat Window */}
+      <ChatWindow
+        sessionId={sessionId}
+        isOpen={showChat}
+        onClose={() => setShowChat(false)}
+      />
     </div>
   );
 }

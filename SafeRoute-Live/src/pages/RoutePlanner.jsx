@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import MapComponent from '../components/MapComponent.jsx';
 import RouteCard from '../components/RouteCard.jsx';
@@ -20,6 +20,11 @@ export default function RoutePlanner() {
   const [showAISuggestion, setShowAISuggestion] = useState(false);
   const [aiSuggestion, setAISuggestion] = useState(null);
   const [loadingAI, setLoadingAI] = useState(false);
+  
+  // Refs for AI suggestion (must be declared early to avoid reference errors)
+  const aiSuggestionRef = useRef(null);
+  const showAISuggestionRef = useRef(false);
+  const fetchAISuggestionRef = useRef(null);
   const [routeCompleted, setRouteCompleted] = useState(false);
   const [sourceSuggestions, setSourceSuggestions] = useState([]);
   const [destSuggestions, setDestSuggestions] = useState([]);
@@ -72,7 +77,8 @@ export default function RoutePlanner() {
         distanceKm: (route.distance / 1000).toFixed(1),
         etaMin: Math.round(route.duration / 60),
         geometry: route.geometry,
-        metadata: route.metadata || {}
+        metadata: route.metadata || {},
+        scoreReasons: route.scoreReasons || null // Include score reasons
       }));
       
       // Find safest route for AI recommendation
@@ -101,6 +107,16 @@ export default function RoutePlanner() {
       
       // Only update lastFetchRef after successful search
       lastFetchRef.current = { source: currentSource, dest: currentDest, pref: currentPref };
+      
+      // Automatically fetch AI suggestion when routes are loaded
+      if (formattedRoutes.length > 0) {
+        // Fetch AI suggestion with real-time data (using ref to avoid dependency issues)
+        setTimeout(() => {
+          if (fetchAISuggestionRef.current) {
+            fetchAISuggestionRef.current(false); // Don't force modal open, just fetch in background
+          }
+        }, 1000); // Wait 1 second after routes load
+      }
       
       // Track route start time for completion simulation
       if (formattedRoutes.length > 0) {
@@ -270,7 +286,7 @@ export default function RoutePlanner() {
   }, [source, dest, pref]); // Only depend on source, dest, pref - not routes.length
 
   useEffect(() => {
-    // Set up interval ONLY for fetching accidents (not routes)
+    // Set up interval for fetching accidents AND AI suggestions (real-time updates)
     // Routes will ONLY be fetched on manual button clicks
     if (routes.length > 0) {
       // Clear any existing interval first
@@ -278,11 +294,14 @@ export default function RoutePlanner() {
         clearInterval(intervalRef.current);
       }
       
-      // Only fetch accidents, NEVER fetch routes automatically
+      // Fetch accidents and AI suggestions in real-time
       intervalRef.current = setInterval(() => {
         fetchAccidents();
-        // Routes are NEVER fetched automatically - only via button click
-      }, 10000); // 10 seconds
+        // Auto-refresh AI suggestions every 30 seconds if routes exist
+        if (routes.length > 0 && fetchAISuggestionRef.current) {
+          fetchAISuggestionRef.current(false); // Don't force modal open on auto-update
+        }
+      }, 30000); // 30 seconds for real-time updates
     } else {
       // Clear interval if no routes
       if (intervalRef.current) {
@@ -297,15 +316,22 @@ export default function RoutePlanner() {
         intervalRef.current = null;
       }
     };
-  }, [routes.length]); // Only recreate interval when routes.length changes
+  }, [routes.length]); // Only depend on routes.length - fetchAISuggestionRef is used inside
 
-  const handleRecalculate = () => {
-    fetchSafeRoutes(true); // Pass true to indicate manual search
-  };
+  // Keep refs in sync with state
+  useEffect(() => {
+    aiSuggestionRef.current = aiSuggestion;
+  }, [aiSuggestion]);
+  
+  useEffect(() => {
+    showAISuggestionRef.current = showAISuggestion;
+  }, [showAISuggestion]);
 
-  const handleAISuggestion = async () => {
+  const fetchAISuggestion = useCallback(async (showModal = false) => {
     if (routes.length === 0) {
-      alert('Please find routes first');
+      if (showModal) {
+        alert('Please find routes first');
+      }
       return;
     }
     
@@ -317,15 +343,49 @@ export default function RoutePlanner() {
         safetyScore: r.score
       }));
       
-      const response = await getAISafetySuggestion(source, dest, routesData);
-      setAISuggestion(response.recommendation);
-      setShowAISuggestion(true);
+      // Get current location if available, otherwise use route midpoint
+      let lat, lng;
+      if (selected && selected.geometry && selected.geometry.coordinates) {
+        const coords = selected.geometry.coordinates;
+        const midIdx = Math.floor(coords.length / 2);
+        lng = coords[midIdx][0];
+        lat = coords[midIdx][1];
+      }
+      
+      const response = await getAISafetySuggestion(source, dest, routesData, lat, lng);
+      const newSuggestion = response.recommendation;
+      
+      // Check if suggestion has changed significantly using refs
+      const currentSuggestion = aiSuggestionRef.current;
+      const hasChanged = !currentSuggestion || 
+        currentSuggestion.realTimeData?.incidentsCount !== newSuggestion.realTimeData?.incidentsCount ||
+        currentSuggestion.realTimeData?.accidentsCount !== newSuggestion.realTimeData?.accidentsCount;
+      
+      setAISuggestion(newSuggestion);
+      
+      // Auto-open modal if suggestion changed and modal was already open, or if manually requested
+      if (showModal || (hasChanged && showAISuggestionRef.current)) {
+        setShowAISuggestion(true);
+      }
     } catch (err) {
       console.error('Error getting AI suggestion:', err);
-      alert('Failed to get AI suggestion. Please try again.');
+      if (showModal) {
+        alert('Failed to get AI suggestion. Please try again.');
+      }
     } finally {
       setLoadingAI(false);
     }
+  }, [routes, source, dest, selected]);
+  
+  // Store fetchAISuggestion in ref immediately after it's defined
+  fetchAISuggestionRef.current = fetchAISuggestion;
+
+  const handleRecalculate = () => {
+    fetchSafeRoutes(true); // Pass true to indicate manual search
+  };
+
+  const handleAISuggestion = () => {
+    fetchAISuggestion(true); // Show modal when manually clicked
   };
 
   const handleRouteComplete = () => {
@@ -474,9 +534,22 @@ export default function RoutePlanner() {
               animate={{ opacity: 1, y: 0 }}
               onClick={handleAISuggestion}
               disabled={loadingAI}
-              className="w-full rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 py-2.5 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed font-semibold flex items-center justify-center gap-2"
+              className="w-full rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 py-2.5 hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed font-semibold flex items-center justify-center gap-2 relative"
             >
-              {loadingAI ? '⏳ Analyzing...' : '🤖 Get AI Safety Suggestion'}
+              {loadingAI ? (
+                <>
+                  <span className="animate-spin">⏳</span>
+                  <span>Analyzing...</span>
+                </>
+              ) : (
+                <>
+                  <span>🤖</span>
+                  <span>AI Safety Suggestion</span>
+                  {aiSuggestion && aiSuggestion.realTimeData && (
+                    <span className="ml-1 w-2 h-2 bg-green-400 rounded-full animate-pulse" title="Live updates active"></span>
+                  )}
+                </>
+              )}
             </motion.button>
           )}
           
@@ -514,6 +587,7 @@ export default function RoutePlanner() {
               source={source}
               destination={dest}
               geometry={r.geometry}
+              scoreReasons={r.scoreReasons}
             />
           ))}
         </div>

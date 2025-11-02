@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Copy, Check, Share2, MapPin, Send } from 'lucide-react';
+import { Copy, Check, Share2, MapPin, Send, Users } from 'lucide-react';
 import { useSocket } from '../context/SocketContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 import ContactList from '../components/ContactList.jsx';
 import ShareRequestToast from '../components/ShareRequestToast.jsx';
 import DirectShare from '../components/DirectShare.jsx';
+import FriendList from '../components/FriendList.jsx';
 import { getActiveSessions } from '../services/shareService.js';
 
 export default function Share() {
@@ -83,6 +85,22 @@ export default function Share() {
         <DirectShare onShareStarted={(data) => {
           setActiveSessions(prev => [...prev, data]);
         }} />
+      </div>
+
+      {/* Friend List - Add/Manage Friends */}
+      <div className="mb-6">
+        <div className="glass rounded-2xl p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Users className="text-xl text-[var(--color-primary)]" />
+            <h2 className="text-xl font-semibold">Friends</h2>
+          </div>
+          <FriendList
+            onFriendSelect={(friend) => {
+              // Navigate to share with this friend
+              navigate(`/share?friendId=${friend.id}`);
+            }}
+          />
+        </div>
       </div>
 
       {/* Contact List - Alternative method */}

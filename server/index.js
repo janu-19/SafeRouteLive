@@ -4,6 +4,24 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import session from 'express-session';
+import passport from 'passport';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
+
+// Import database connection
+import { connectDB } from './src/config/database.js';
+
+// Import Passport configuration
+import './src/config/passport.js';
+
+// Import routes
+import authRoutes from './src/routes/authRoutes.js';
+
+// Import models
+import Incident from './src/models/Incident.js';
 
 // Node.js 18+ has native fetch support
 // If using Node.js < 18, uncomment: import fetch from 'node-fetch';
@@ -15,8 +33,35 @@ const app = express();
 const httpServer = createServer(app);
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+// CORS configuration
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  credentials: true
+}));
+
 app.use(express.json());
+
+// Session configuration (needed for Passport)
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'saferoute-session-secret-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production', // HTTPS only in production
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
+
+// Initialize Passport
+app.use(passport.initialize());
+app.use(passport.session());
+
+// Connect to MongoDB
+connectDB().catch(err => {
+  console.error('Failed to connect to MongoDB:', err);
+  process.exit(1);
+});
 
 // Initialize Socket.IO
 const io = new Server(httpServer, {
@@ -151,6 +196,18 @@ io.on('connection', (socket) => {
     }
   });
 });
+
+// Register authentication routes
+app.use('/api/auth', authRoutes);
+
+// Import and register friend, chat, and share routes
+import friendRoutes from './src/routes/friendRoutes.js';
+import chatRoutes from './src/routes/chatRoutes.js';
+import shareRoutes from './src/routes/shareRoutes.js';
+
+app.use('/api/friends', friendRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/share', shareRoutes);
 
 // API Configuration
 const MAPBOX_ACCESS_TOKEN = process.env.MAPBOX_ACCESS_TOKEN || 'pk.eyJ1IjoibHlubnZpc2hhbnRoIiwiYSI6ImNtaGM3dDNhZTIwdWcya3BjMDlta2JzYjQifQ.xrN6-HYsxUE99AWH1mHBqQ';
@@ -391,7 +448,8 @@ function isNightTime() {
 }
 
 // Safety score calculation with dynamic weights
-function calculateSafetyScore(route, preference, crimeData, accidents, traffic, lighting, crowd, timeOfDay) {
+// Now includes n8n alerts/incidents along the route
+function calculateSafetyScore(route, preference, crimeData, accidents, traffic, lighting, crowd, timeOfDay, n8nAlerts = []) {
   const hour = new Date().getHours();
   const isNight = isNightTime();
   const isMonsoon = isMonsoonMonth();
@@ -401,9 +459,101 @@ function calculateSafetyScore(route, preference, crimeData, accidents, traffic, 
   const coords = route.geometry.coordinates;
   let totalCrime = 0;
   let totalAccidents = 0;
+  let totalIncidents = 0; // n8n alerts/incidents along route
   let avgLighting = 0;
   let avgCrowd = 0;
   let avgSpeed = 0;
+  
+  // Track reasons for score (for user feedback)
+  const scoreReasons = {
+    incidents: [],
+    accidents: [],
+    crimeAreas: [],
+    lowLighting: false,
+    lowCrowd: false,
+    timeFactors: []
+  };
+
+  // Check for incidents from n8n along the route
+  const routeBBox = {
+    minLng: Math.min(...coords.map(c => c[0])),
+    maxLng: Math.max(...coords.map(c => c[0])),
+    minLat: Math.min(...coords.map(c => c[1])),
+    maxLat: Math.max(...coords.map(c => c[1]))
+  };
+
+  // Find n8n alerts that are along the route path
+  n8nAlerts.forEach(alert => {
+    if (!alert.location) return;
+    
+    let isOnRoute = false;
+    
+    // If alert has lat/lng coordinates, check if it's near any route coordinate
+    if (alert.lat && alert.lng) {
+      const alertLng = typeof alert.lng === 'number' ? alert.lng : parseFloat(alert.lng);
+      const alertLat = typeof alert.lat === 'number' ? alert.lat : parseFloat(alert.lat);
+      
+      // Validate coordinates
+      if (isNaN(alertLng) || isNaN(alertLat)) return;
+      
+      // Check if alert is within route bounding box (quick check)
+      if (alertLng >= routeBBox.minLng && alertLng <= routeBBox.maxLng &&
+          alertLat >= routeBBox.minLat && alertLat <= routeBBox.maxLat) {
+        // Check distance to nearest route point
+        const minDist = coords.reduce((min, coord) => {
+          const dist = Math.sqrt(
+            Math.pow(coord[1] - alertLat, 2) + 
+            Math.pow(coord[0] - alertLng, 2)
+          );
+          return dist < min ? dist : min;
+        }, Infinity);
+        
+        // If within 500m of route (0.0045 degrees ≈ 500m)
+        if (minDist < 0.0045) {
+          isOnRoute = true;
+        }
+      }
+    } else {
+      // If no coordinates, try to match location string with route area
+      // This is a fallback for alerts that couldn't be geocoded
+      // We'll use a simple text-based check - if location name appears to be in route area
+      // This is less precise but better than nothing
+      const locationStr = alert.location.toLowerCase();
+      // For now, we'll skip text-based matching to avoid false positives
+      // Alerts without coordinates won't affect score (safer approach)
+    }
+    
+    if (isOnRoute) {
+      // Penalty based on incident type
+      const type = alert.type || '';
+      let penalty = 0;
+      let reasonText = '';
+      
+      if (type === 'accident' || type === 'emergency') {
+        penalty = 25; // High penalty
+        reasonText = `🚨 ${alert.type === 'accident' ? 'Accident' : 'Emergency'} reported near ${alert.location || 'route'}`;
+        scoreReasons.incidents.push(reasonText);
+      } else if (type === 'crime') {
+        penalty = 20; // High penalty
+        reasonText = `🔴 Crime incident reported near ${alert.location || 'route'}`;
+        scoreReasons.incidents.push(reasonText);
+      } else if (type === 'protest' || type === 'crowd') {
+        penalty = 10; // Medium penalty
+        reasonText = `⚠️ ${alert.type === 'protest' ? 'Protest' : 'Crowd'} activity near ${alert.location || 'route'}`;
+        scoreReasons.incidents.push(reasonText);
+      } else if (type === 'roadwork') {
+        penalty = 5; // Low penalty
+        reasonText = `🚧 Roadwork near ${alert.location || 'route'}`;
+        scoreReasons.incidents.push(reasonText);
+      } else {
+        penalty = 5; // Default small penalty for other incidents
+        reasonText = `📍 Incident reported near ${alert.location || 'route'}`;
+        scoreReasons.incidents.push(reasonText);
+      }
+      
+      totalIncidents += penalty;
+    }
+  });
 
   coords.forEach(coord => {
     // Find nearest crime data
@@ -419,7 +569,28 @@ function calculateSafetyScore(route, preference, crimeData, accidents, traffic, 
       return dist < 0.01; // ~1km
     });
     if (nearbyAccident) {
-      totalAccidents += nearbyAccident.severity === 'high' ? 20 : nearbyAccident.severity === 'medium' ? 10 : 5;
+      const penalty = nearbyAccident.severity === 'high' ? 20 : nearbyAccident.severity === 'medium' ? 10 : 5;
+      totalAccidents += penalty;
+      
+      // Track accident for reasons
+      if (!scoreReasons.accidents.find(a => a.lat === nearbyAccident.lat && a.lng === nearbyAccident.lng)) {
+        scoreReasons.accidents.push({
+          severity: nearbyAccident.severity,
+          lat: nearbyAccident.lat,
+          lng: nearbyAccident.lng
+        });
+      }
+    }
+    
+    // Track high crime areas
+    if (nearestCrime.rate > 5 && nearestCrime.dist < 0.005) {
+      // High crime within 500m
+      if (scoreReasons.crimeAreas.length < 5) {
+        scoreReasons.crimeAreas.push({
+          rate: nearestCrime.rate,
+          location: `High crime area (rate: ${nearestCrime.rate.toFixed(1)})`
+        });
+      }
     }
   });
 
@@ -451,17 +622,34 @@ function calculateSafetyScore(route, preference, crimeData, accidents, traffic, 
 
   // Calculate lighting average
   if (routeLighting.length > 0) {
+    const goodLightingCount = routeLighting.filter(l => l.lighting === 'good').length;
     routeLighting.forEach(l => {
       avgLighting += l.lighting === 'good' ? 10 : l.lighting === 'moderate' ? 5 : 0;
     });
     avgLighting /= routeLighting.length;
+    
+    // Track if lighting is poor
+    const goodLightingRatio = goodLightingCount / routeLighting.length;
+    if (goodLightingRatio < 0.3) {
+      scoreReasons.lowLighting = true;
+    }
+  } else {
+    // No lighting data - assume low lighting
+    scoreReasons.lowLighting = true;
   }
 
   if (routeCrowd.length > 0) {
+    const highCrowdCount = routeCrowd.filter(c => c.density === 'high').length;
     routeCrowd.forEach(c => {
       avgCrowd += c.density === 'high' ? 15 : c.density === 'medium' ? 8 : 0;
     });
     avgCrowd /= routeCrowd.length;
+    
+    // Track if crowd density is low
+    const highCrowdRatio = highCrowdCount / routeCrowd.length;
+    if (highCrowdRatio < 0.2) {
+      scoreReasons.lowCrowd = true;
+    }
   }
 
   // If traffic is null, use route.duration from Mapbox driving-traffic API
@@ -488,6 +676,11 @@ function calculateSafetyScore(route, preference, crimeData, accidents, traffic, 
   if (isMonsoon) {
     accidentPenalty *= 1.15; // Increase by 15% during monsoon
   }
+  
+  // Calculate incident penalty from n8n alerts along route
+  // More incidents = lower score, no incidents = bonus
+  const incidentPenalty = totalIncidents > 0 ? (totalIncidents / coords.length) * 20 : 0;
+  const incidentBonus = totalIncidents === 0 ? 10 : 0; // Bonus if no incidents found
 
   // Get base weights
   let lightingWeight, crowdWeight, accidentWeight;
@@ -507,15 +700,72 @@ function calculateSafetyScore(route, preference, crimeData, accidents, traffic, 
   });
 
   // Apply weighted formula based on preference
+  // Score starts higher if no incidents found, decreases with incidents along route
   let score = 0;
+  const baseScore = 50 + incidentBonus; // Higher base if no incidents
+  
   if (preference === 'Well-lit') {
-    score = 40 + (avgLighting * adjusted.lighting) + (avgCrowd * 0.2) - (crimePenalty * 0.25) - (adjusted.accident * 0.1) + timePenalty;
+    score = baseScore + (avgLighting * adjusted.lighting) + (avgCrowd * 0.2) - (crimePenalty * 0.25) - (adjusted.accident * 0.1) - (incidentPenalty * 0.3) + timePenalty;
   } else if (preference === 'Crowded') {
-    score = 40 + (avgCrowd * 0.4) + (avgLighting * adjusted.lighting) - (crimePenalty * 0.2) - (adjusted.accident * 0.1) + timePenalty;
+    score = baseScore + (avgCrowd * 0.4) + (avgLighting * adjusted.lighting) - (crimePenalty * 0.2) - (adjusted.accident * 0.1) - (incidentPenalty * 0.3) + timePenalty;
   } else if (preference === 'Fastest') {
-    score = 30 + (speedFactor * 0.4) + (avgLighting * (adjusted.lighting * 0.25)) - (crimePenalty * 0.15) - (adjusted.accident * 0.15) + timePenalty;
+    score = baseScore + (speedFactor * 0.4) + (avgLighting * (adjusted.lighting * 0.25)) - (crimePenalty * 0.15) - (adjusted.accident * 0.15) - (incidentPenalty * 0.25) + timePenalty;
   }
 
+  // Track time-related factors
+  if (isNight) {
+    scoreReasons.timeFactors.push('🌙 Night time travel (reduced visibility)');
+  }
+  if (isMonsoon) {
+    scoreReasons.timeFactors.push('🌧️ Monsoon season (higher accident risk)');
+  }
+  
+  // Build summary of reasons
+  const reasons = [];
+  
+  if (scoreReasons.incidents.length > 0) {
+    reasons.push(...scoreReasons.incidents.slice(0, 3)); // Limit to 3 most recent
+  }
+  
+  if (scoreReasons.accidents.length > 0) {
+    const highSeverity = scoreReasons.accidents.filter(a => a.severity === 'high').length;
+    const mediumSeverity = scoreReasons.accidents.filter(a => a.severity === 'medium').length;
+    if (highSeverity > 0) {
+      reasons.push(`🚨 ${highSeverity} high-severity accident${highSeverity > 1 ? 's' : ''} along route`);
+    }
+    if (mediumSeverity > 0) {
+      reasons.push(`⚠️ ${mediumSeverity} medium-severity accident${mediumSeverity > 1 ? 's' : ''} along route`);
+    }
+  }
+  
+  if (scoreReasons.crimeAreas.length > 0) {
+    reasons.push(`🔴 ${scoreReasons.crimeAreas.length} high crime area${scoreReasons.crimeAreas.length > 1 ? 's' : ''} detected`);
+  }
+  
+  if (scoreReasons.lowLighting) {
+    reasons.push('💡 Poor street lighting along route');
+  }
+  
+  if (scoreReasons.lowCrowd && preference === 'Crowded') {
+    reasons.push('👥 Low crowd density (less safe for crowded preference)');
+  }
+  
+  if (scoreReasons.timeFactors.length > 0) {
+    reasons.push(...scoreReasons.timeFactors);
+  }
+  
+  // If score is good, mention positive factors
+  const positiveFactors = [];
+  if (totalIncidents === 0 && scoreReasons.accidents.length === 0) {
+    positiveFactors.push('✅ No incidents or accidents reported');
+  }
+  if (avgLighting > 7) {
+    positiveFactors.push('💡 Good street lighting');
+  }
+  if (avgCrowd > 10 && preference === 'Crowded') {
+    positiveFactors.push('👥 High crowd density');
+  }
+  
   // Normalize score to 0-100
   return {
     score: Math.max(0, Math.min(100, Math.round(score))),
@@ -524,6 +774,13 @@ function calculateSafetyScore(route, preference, crimeData, accidents, traffic, 
       isMonsoon,
       lightingWeight: adjusted.lighting,
       accidentPenalty: adjusted.accident
+    },
+    scoreReasons: {
+      negative: reasons,
+      positive: positiveFactors,
+      incidentsCount: scoreReasons.incidents.length,
+      accidentsCount: scoreReasons.accidents.length,
+      crimeAreasCount: scoreReasons.crimeAreas.length
     }
   };
 }
@@ -769,6 +1026,14 @@ async function getDataFromN8N(lat, lng) {
     
     if (normalizedData.socialFeed.length > 0) {
       console.log(`✅ Fetched ${normalizedData.socialFeed.length} items from n8n workflow`);
+      
+      // Store incidents in MongoDB
+      try {
+        await storeIncidentsFromN8N(normalizedData.socialFeed, lat, lng);
+      } catch (storeError) {
+        console.error('Error storing incidents:', storeError);
+        // Don't fail the entire request if storing fails
+      }
     } else {
       console.log('⚠️ No data found in n8n response, returning empty structure');
     }
@@ -783,6 +1048,171 @@ async function getDataFromN8N(lat, lng) {
       crowdDensity: null,
       news: []
     };
+  }
+}
+
+/**
+ * Store incidents from n8n data into MongoDB
+ * @param {Array} socialFeed - Array of alert/incident objects from n8n
+ * @param {number} lat - Latitude
+ * @param {number} lng - Longitude
+ */
+async function storeIncidentsFromN8N(socialFeed, lat, lng) {
+  if (!socialFeed || socialFeed.length === 0) return;
+  
+  try {
+    for (const alert of socialFeed) {
+      // Skip if no location or type
+      if (!alert.location || !alert.type) continue;
+      
+      // Determine severity based on type
+      let severity = 'medium';
+      if (alert.type === 'accident' || alert.type === 'emergency' || alert.type === 'crime') {
+        severity = 'high';
+      } else if (alert.type === 'protest' || alert.type === 'crowd') {
+        severity = 'medium';
+      } else {
+        severity = 'low';
+      }
+      
+      // Geocode location if we have lat/lng, otherwise will need to geocode later
+      let alertLat = alert.lat || lat;
+      let alertLng = alert.lng || lng;
+      
+      // Try to geocode location string if no coordinates
+      if (!alertLat || !alertLng || alertLat === lat || alertLng === lng) {
+        if (alert.location) {
+          try {
+            const coords = await geocodeAddress(alert.location);
+            alertLng = coords[0];
+            alertLat = coords[1];
+          } catch (geocodeError) {
+            // Use default coordinates if geocoding fails
+            alertLat = lat;
+            alertLng = lng;
+          }
+        }
+      }
+      
+      // Check if incident already exists (to avoid duplicates)
+      const existingIncident = await Incident.findOne({
+        sourceId: alert.id,
+        source: 'n8n',
+        reportedAt: {
+          $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // Within last 24 hours
+        }
+      });
+      
+      if (existingIncident) {
+        continue; // Skip if already stored
+      }
+      
+      // Create incident record
+      await Incident.create({
+        type: alert.type,
+        location: alert.location,
+        latitude: alertLat,
+        longitude: alertLng,
+        summary: alert.text || alert.summary,
+        description: alert.text || alert.summary,
+        source: 'n8n',
+        sourceId: alert.id,
+        severity: severity,
+        status: 'active',
+        reportedAt: alert.timestamp ? new Date(alert.timestamp) : new Date(),
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // Expire after 7 days
+        metadata: {
+          sourceInfo: alert.source,
+          originalData: alert
+        }
+      });
+    }
+    
+    console.log(`✅ Stored incidents to MongoDB`);
+  } catch (error) {
+    console.error('Error storing incidents to MongoDB:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get historical incidents near a route
+ * @param {Array} routeCoordinates - Array of [lng, lat] coordinates
+ * @param {number} radiusMeters - Radius in meters (default 500m)
+ * @returns {Promise<Array>} Array of incidents
+ */
+async function getHistoricalIncidents(routeCoordinates, radiusMeters = 500) {
+  try {
+    if (!routeCoordinates || routeCoordinates.length === 0) {
+      return [];
+    }
+    
+    // Calculate bounding box for route
+    const lngs = routeCoordinates.map(c => c[0]);
+    const lats = routeCoordinates.map(c => c[1]);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    
+    // Convert radius from meters to approximate degrees
+    // 1 degree latitude ≈ 111km, 1 degree longitude ≈ 111km * cos(latitude)
+    const latRadius = radiusMeters / 111000;
+    const avgLat = (minLat + maxLat) / 2;
+    const lngRadius = radiusMeters / (111000 * Math.cos(avgLat * Math.PI / 180));
+    
+    // Find active incidents within bounding box and time window (last 7 days)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    
+    const incidents = await Incident.find({
+      status: 'active',
+      latitude: {
+        $gte: minLat - latRadius,
+        $lte: maxLat + latRadius
+      },
+      longitude: {
+        $gte: minLng - lngRadius,
+        $lte: maxLng + lngRadius
+      },
+      reportedAt: {
+        $gte: sevenDaysAgo
+      }
+    }).sort({ reportedAt: -1 }).limit(100); // Limit to most recent 100
+    
+    // Further filter by actual distance from route
+    const incidentsNearRoute = [];
+    for (const incident of incidents) {
+      // Check distance from nearest route point
+      const minDist = routeCoordinates.reduce((min, coord) => {
+        const dist = Math.sqrt(
+          Math.pow(coord[1] - incident.latitude, 2) + 
+          Math.pow(coord[0] - incident.longitude, 2)
+        );
+        return dist < min ? dist : min;
+      }, Infinity);
+      
+      // Convert distance (in degrees) to meters (approximate)
+      const distMeters = minDist * 111000;
+      
+      if (distMeters <= radiusMeters) {
+        incidentsNearRoute.push({
+          id: incident._id.toString(),
+          type: incident.type,
+          location: incident.location,
+          lat: incident.latitude,
+          lng: incident.longitude,
+          summary: incident.summary,
+          severity: incident.severity,
+          reportedAt: incident.reportedAt,
+          source: incident.source
+        });
+      }
+    }
+    
+    return incidentsNearRoute;
+  } catch (error) {
+    console.error('Error fetching historical incidents:', error);
+    return []; // Return empty array on error
   }
 }
 
@@ -1214,35 +1644,50 @@ app.get('/api/getSafeRoutes', async (req, res) => {
       });
     }
 
-    // Get routes from Mapbox Directions API
+    // Get routes from Mapbox Directions API (only real driving routes, no straight lines)
     let routes = await getRoutesFromMapbox(sourceCoords, destCoords);
     
-    // If we got only one route from Mapbox, add a couple of alternatives using slight variations
-    if (routes.length < 3) {
-      // Generate alternative routes by slightly offsetting coordinates
-      const altRoutes = [];
-      for (let i = 0; i < 3 - routes.length; i++) {
-        const offset = (i + 1) * 0.005; // Small offset
-        altRoutes.push({
-          geometry: {
-            type: 'LineString',
-            coordinates: [
-              sourceCoords,
-              [sourceCoords[0] + offset, sourceCoords[1] + offset],
-              [destCoords[0] + offset, destCoords[1] + offset],
-              destCoords
-            ]
-          },
-          distance: routes[0].distance * (1 + (i + 1) * 0.1),
-          duration: routes[0].duration * (1 + (i + 1) * 0.1),
-          name: i === 0 ? 'Well-lit Main Roads' : i === 1 ? 'Crowded Streets' : 'Alternative Route'
-        });
-      }
-      routes = [...routes, ...altRoutes];
-    }
-
-    // Limit to 3 routes
+    // Only use real routes from Mapbox - no straight line routes
+    // Limit to available routes (only real driving routes, max 3)
     routes = routes.slice(0, 3);
+    
+    // Fetch n8n alerts for the route area (use midpoint of route)
+    const midLat = (sourceCoords[1] + destCoords[1]) / 2;
+    const midLng = (sourceCoords[0] + destCoords[0]) / 2;
+    let n8nAlerts = [];
+    try {
+      const n8nData = await getDataFromN8N(midLat, midLng);
+      // Extract alerts with location data and add coordinates
+      if (n8nData.socialFeed && Array.isArray(n8nData.socialFeed)) {
+        const alertsWithLocations = n8nData.socialFeed.filter(alert => alert.location);
+        
+        // Geocode alert locations to get coordinates
+        const geocodedAlerts = await Promise.all(
+          alertsWithLocations.map(async (alert) => {
+            try {
+              const geocoded = await geocodeAddress(alert.location);
+              return {
+                ...alert,
+                lat: geocoded[1],
+                lng: geocoded[0]
+              };
+            } catch (e) {
+              // If geocoding fails, return alert without coordinates
+              // It will be checked by location name matching if needed
+              return { ...alert, lat: null, lng: null };
+            }
+          })
+        );
+        
+        n8nAlerts = geocodedAlerts;
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not fetch n8n alerts for route safety calculation:', error.message);
+      n8nAlerts = []; // Continue with empty alerts
+    }
+    
+    // Fetch historical incidents from MongoDB for each route
+    // This will be done per route below to get route-specific incidents
 
     // --- LIGHTING FIX: CALL ONCE FOR ALL ROUTES ---
     // 1. Get ALL coordinates from ALL routes
@@ -1265,6 +1710,30 @@ app.get('/api/getSafeRoutes', async (req, res) => {
       const lighting = allStreetlights; // Use the pre-fetched lighting data for all routes
       const crowd = generateMockCrowdDensity(coords);
       
+      // Get historical incidents from MongoDB for this specific route
+      let historicalIncidents = [];
+      try {
+        historicalIncidents = await getHistoricalIncidents(coords, 500); // 500m radius
+      } catch (error) {
+        console.warn('⚠️ Could not fetch historical incidents:', error.message);
+      }
+      
+      // Combine n8n alerts with historical incidents
+      const allIncidents = [
+        ...n8nAlerts,
+        ...historicalIncidents.map(inc => ({
+          id: inc.id,
+          type: inc.type,
+          location: inc.location,
+          lat: inc.lat,
+          lng: inc.lng,
+          text: inc.summary,
+          severity: inc.severity,
+          source: inc.source || 'historical',
+          timestamp: inc.reportedAt
+        }))
+      ];
+      
       const safetyResult = calculateSafetyScore(
         route,
         preference,
@@ -1273,7 +1742,8 @@ app.get('/api/getSafeRoutes', async (req, res) => {
         null, // Traffic is already included in route.duration from Mapbox driving-traffic
         lighting, // Pre-fetched lighting data for all routes
         crowd,
-        new Date().getHours()
+        new Date().getHours(),
+        allIncidents // Pass all incidents (n8n + historical) to check incidents along route
       );
 
       const safetyScore = safetyResult.score;
@@ -1291,6 +1761,7 @@ app.get('/api/getSafeRoutes', async (req, res) => {
         safetyScore,
         color,
         metadata: safetyResult.metadata,
+        scoreReasons: safetyResult.scoreReasons, // Include score reasons
         // Include aggregated safety data
         safetyData: {
           crimeRate: (crimeData.reduce((sum, c) => sum + c.rate, 0) / crimeData.length).toFixed(2),
@@ -1353,9 +1824,9 @@ app.post('/api/feedback', (req, res) => {
   });
 });
 
-// AI Safety Suggestion endpoint
-app.get('/api/ai-safety-suggestion', (req, res) => {
-  const { source, destination, routes } = req.query;
+// AI Safety Suggestion endpoint - Now with real-time data
+app.get('/api/ai-safety-suggestion', async (req, res) => {
+  const { source, destination, routes, lat, lng } = req.query;
   
   if (!routes) {
     return res.status(400).json({ error: 'Routes data is required' });
@@ -1365,6 +1836,39 @@ app.get('/api/ai-safety-suggestion', (req, res) => {
     const routesData = JSON.parse(routes);
     const currentHour = new Date().getHours();
     const isMonsoon = isMonsoonMonth();
+    
+    // Fetch real-time data if coordinates provided
+    let realTimeData = {
+      incidents: [],
+      accidents: [],
+      weather: null,
+      traffic: null,
+      lastUpdated: new Date().toISOString()
+    };
+    
+    if (lat && lng) {
+      try {
+        // Get n8n alerts for the area
+        const n8nData = await getDataFromN8N(parseFloat(lat), parseFloat(lng));
+        
+        if (n8nData.socialFeed && Array.isArray(n8nData.socialFeed)) {
+          realTimeData.incidents = n8nData.socialFeed.filter(alert => 
+            alert.location && (alert.type === 'accident' || alert.type === 'crime' || 
+            alert.type === 'emergency' || alert.type === 'protest')
+          );
+        }
+        
+        realTimeData.weather = n8nData.weather;
+        realTimeData.traffic = n8nData.traffic;
+        
+        // Get accidents
+        const accidents = await getAccidentsFromTomTom(parseFloat(lat), parseFloat(lng));
+        realTimeData.accidents = accidents;
+      } catch (error) {
+        console.warn('⚠️ Could not fetch real-time data for AI suggestions:', error.message);
+        // Continue with static suggestions
+      }
+    }
     
     // Find safest route
     const safestRoute = routesData.reduce((best, route) => 
@@ -1409,12 +1913,28 @@ app.get('/api/ai-safety-suggestion', (req, res) => {
       ? ((safestRoute.safetyScore - secondSafest.safetyScore) / secondSafest.safetyScore * 100).toFixed(0)
       : 0;
     
-    // Generate recommendation text
+    // Generate recommendation text with real-time context
     let recommendation = '';
-    if (safetyImprovement > 10) {
-      recommendation = `Try ${safestRoute.name} — ${safetyImprovement}% safer than ${secondSafest?.name || 'alternatives'}`;
+    const incidentCount = realTimeData.incidents.length;
+    const accidentCount = realTimeData.accidents.length;
+    
+    // Real-time alerts
+    const hasRecentIncidents = incidentCount > 0;
+    const hasRecentAccidents = accidentCount > 0;
+    const hasWeatherWarning = realTimeData.weather && 
+      (realTimeData.weather.condition?.toLowerCase().includes('storm') ||
+       realTimeData.weather.condition?.toLowerCase().includes('heavy rain'));
+    
+    if (hasRecentIncidents || hasRecentAccidents) {
+      if (safetyImprovement > 10) {
+        recommendation = `⚠️ ${safestRoute.name} recommended — ${incidentCount + accidentCount} active incident${incidentCount + accidentCount > 1 ? 's' : ''} detected. ${safetyImprovement}% safer than alternatives.`;
+      } else {
+        recommendation = `⚠️ ${safestRoute.name} is safest — ${incidentCount + accidentCount} active incident${incidentCount + accidentCount > 1 ? 's' : ''} along other routes detected.`;
+      }
+    } else if (safetyImprovement > 10) {
+      recommendation = `✅ Try ${safestRoute.name} — ${safetyImprovement}% safer than ${secondSafest?.name || 'alternatives'}. No active incidents detected.`;
     } else {
-      recommendation = `${safestRoute.name} is the safest route available`;
+      recommendation = `✅ ${safestRoute.name} is the safest route available. All clear - no incidents reported.`;
     }
     
     res.json({
@@ -1439,12 +1959,30 @@ app.get('/api/ai-safety-suggestion', (req, res) => {
           currentHour
         },
         suggestions: [
+          hasRecentIncidents 
+            ? `🚨 ${incidentCount} active incident${incidentCount > 1 ? 's' : ''} reported in the area - Consider alternative routes if possible`
+            : '✅ No active incidents detected in the area',
+          hasRecentAccidents
+            ? `⚠️ ${accidentCount} accident${accidentCount > 1 ? 's' : ''} reported nearby - Drive carefully`
+            : '',
+          hasWeatherWarning
+            ? `⛈️ Weather alert: ${realTimeData.weather.condition} - Allow extra travel time`
+            : realTimeData.weather
+              ? `🌤️ Weather: ${realTimeData.weather.condition} - Good conditions for travel`
+              : '',
           bestDepartureTime !== currentHour 
             ? `Best departure time: ${formatHour(bestDepartureTime)} (${safetyImprovement}% safer)`
             : 'Current time is optimal for travel',
           isMonsoon ? '⚠️ Monsoon season detected - Exercise extra caution' : '',
           isNightTime() ? '🌙 Night time travel - Well-lit routes recommended' : ''
-        ].filter(s => s !== '')
+        ].filter(s => s !== ''),
+        realTimeData: {
+          incidentsCount: incidentCount,
+          accidentsCount: accidentCount,
+          weather: realTimeData.weather,
+          traffic: realTimeData.traffic,
+          lastUpdated: realTimeData.lastUpdated
+        }
       }
     });
   } catch (error) {

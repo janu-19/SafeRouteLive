@@ -1,13 +1,14 @@
 import jwt from 'jsonwebtoken';
 import ShareRequest from '../models/ShareRequest.js';
 import SharedSession from '../models/SharedSession.js';
+import ChatMessage from '../models/ChatMessage.js';
 
 /**
  * Rate limiting map: socketId -> lastUpdateTime
- * Limits location updates to 1 per second per socket
+ * Limits location updates to allow real-time updates (5 per second)
  */
 const rateLimitMap = new Map();
-const LOCATION_UPDATE_RATE_LIMIT_MS = 1000; // 1 second
+const LOCATION_UPDATE_RATE_LIMIT_MS = 200; // 200ms for real-time updates
 
 /**
  * Authenticate socket connection via JWT token
@@ -310,6 +311,85 @@ export const initializeShareSocketHandlers = (io) => {
       } catch (error) {
         console.error('Error ending share session:', error);
         socket.emit('share:error', { message: error.message });
+      }
+    });
+
+    // ==================== CHAT HANDLERS ====================
+    
+    // Send chat message
+    requireAuth('chat:message', async (data) => {
+      try {
+        const { sessionId, message, messageType = 'text', location } = data;
+        
+        if (!sessionId) {
+          socket.emit('chat:error', { message: 'sessionId is required' });
+          return;
+        }
+        
+        if (!message && !location) {
+          socket.emit('chat:error', { message: 'Message or location is required' });
+          return;
+        }
+        
+        // Create chat message
+        const chatMessage = await ChatMessage.create({
+          sessionId,
+          sender: socket.userId,
+          senderName: socket.user.name,
+          message: message || '',
+          messageType,
+          location
+        });
+        
+        const populated = await ChatMessage.findById(chatMessage._id)
+          .populate('sender', 'name email picture')
+          .lean();
+        
+        // Broadcast to all participants in the session/room
+        const roomId = `share_${sessionId}`;
+        io.to(roomId).emit('chat:newMessage', populated);
+        
+        console.log(`💬 Chat message sent in session ${sessionId} by ${socket.userId}`);
+      } catch (error) {
+        console.error('Error sending chat message:', error);
+        socket.emit('chat:error', { message: error.message });
+      }
+    });
+    
+    // Mark messages as read
+    requireAuth('chat:read', async (data) => {
+      try {
+        const { sessionId } = data;
+        
+        if (!sessionId) {
+          return;
+        }
+        
+        await ChatMessage.updateMany(
+          {
+            sessionId,
+            sender: { $ne: socket.userId },
+            'readBy.userId': { $ne: socket.userId }
+          },
+          {
+            $push: {
+              readBy: {
+                userId: socket.userId,
+                readAt: new Date()
+              }
+            }
+          }
+        );
+        
+        // Notify others that messages were read
+        const roomId = `share_${sessionId}`;
+        socket.to(roomId).emit('chat:read', {
+          sessionId,
+          userId: socket.userId,
+          userName: socket.user.name
+        });
+      } catch (error) {
+        console.error('Error marking messages as read:', error);
       }
     });
 

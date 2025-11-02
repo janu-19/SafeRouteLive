@@ -9,14 +9,16 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 // These errors occur when ad blockers block Mapbox analytics requests
 // They are harmless and don't affect map functionality
 (function() {
-  // Intercept console.error to filter Mapbox telemetry errors
+  // Intercept console.error to filter Mapbox telemetry errors and missing images
   const originalConsoleError = console.error;
   console.error = function(...args) {
     const message = args[0]?.toString() || '';
     const errorMessage = args[0]?.message?.toString() || '';
-    // Ignore Mapbox telemetry/analytics errors
+    // Ignore Mapbox telemetry/analytics errors and missing image warnings
     if (message.includes('events.mapbox.com') || 
         message.includes('ERR_BLOCKED_BY_CLIENT') ||
+        (message.includes('could not be loaded') && message.includes('addImage')) ||
+        message.includes('styleimagemissing') ||
         errorMessage.includes('events.mapbox.com') ||
         errorMessage.includes('ERR_BLOCKED_BY_CLIENT') ||
         (typeof args[0] === 'object' && args[0]?.message?.includes('events.mapbox.com'))) {

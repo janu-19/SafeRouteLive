@@ -71,7 +71,10 @@ export default function Dashboard() {
         setLocationError(null);
       },
       (error) => {
-        console.error('❌ Location error:', error);
+        // Only log error if it's not a permission denial (which is expected if user hasn't granted permission)
+        if (error.code !== 1) {
+          console.error('❌ Location error:', error);
+        }
         setIsLocating(false);
         
         let errorMessage = 'Unable to fetch your location.';
@@ -141,15 +144,18 @@ export default function Dashboard() {
       setIsLocating(false);
       setLocationError(null);
     } catch (error) {
-      console.error('❌ Error getting location:', error);
+      // Only log error if it's not a permission denial
+      if (!error.message || (!error.message.includes('denied') && !error.message.includes('Geolocation error: User denied'))) {
+        console.error('❌ Error getting location:', error);
+      }
       setIsLocating(false);
       
       let errorMessage = 'Unable to fetch your location.';
-      if (error.message.includes('denied')) {
+      if (error.message && error.message.includes('denied')) {
         errorMessage = 'Location access denied. Please enable location permissions.';
-      } else if (error.message.includes('unavailable')) {
+      } else if (error.message && error.message.includes('unavailable')) {
         errorMessage = 'Location unavailable. Please check your GPS settings.';
-      } else if (error.message.includes('timeout')) {
+      } else if (error.message && error.message.includes('timeout')) {
         errorMessage = 'Location request timed out. Please try again.';
       }
       

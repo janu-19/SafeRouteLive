@@ -109,6 +109,16 @@ export default function MapComponent({ routes = [], selectedRoute = null, accide
       unit: 'metric'
     }), 'bottom-left');
 
+    // Handle missing Mapbox style images gracefully
+    map.on('styleimagemissing', (e) => {
+      // Silently ignore missing images - they're often optional style elements
+      // The map will continue to work without them
+      if (e.id && !e.id.startsWith('custom-')) {
+        // Only suppress warnings for built-in Mapbox style images
+        return;
+      }
+    });
+
     map.on('load', () => {
       // Enhance label visibility - ensure all labels are shown
       try {

@@ -78,12 +78,19 @@ export async function submitFeedback(routeId, feedback, safetyScore) {
   return res.json();
 }
 
-export async function getAISafetySuggestion(source, destination, routes) {
+export async function getAISafetySuggestion(source, destination, routes, lat = null, lng = null) {
   const params = new URLSearchParams({
     source,
     destination,
     routes: JSON.stringify(routes)
   });
+  
+  // Add coordinates for real-time data if available
+  if (lat !== null && lng !== null) {
+    params.append('lat', lat);
+    params.append('lng', lng);
+  }
+  
   const res = await fetch(`${API_BASE_URL}/api/ai-safety-suggestion?${params}`);
   if (!res.ok) throw new Error('Failed to get AI safety suggestion');
   return res.json();
